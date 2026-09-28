@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-project-transfer"
+version = "0.4.0"
+description = "Project-scoped, Git-friendly native Codex session transfer and lifecycle automation"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+cpt = "codex_project_transfer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

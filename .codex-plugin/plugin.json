@@ -1,0 +1,17 @@
+{
+  "name": "codex-project-transfer",
+  "version": "0.4.0",
+  "description": "Save and synchronize native Codex project chats through an agent-operated skill.",
+  "author": {"name": "Codex Project Transfer contributors"},
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Project Transfer",
+    "shortDescription": "Save project chats and continue on another device",
+    "longDescription": "Ask your agent to set up on-demand local session saving, Git upload, download, and restoration. Runs in a plugin-local virtual environment.",
+    "developerName": "Codex Project Transfer contributors",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": ["Upload this project's saved sessions when I ask."]
+  }
+}

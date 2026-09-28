@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Project Transfer"
+  short_description: "Save Codex chats and transfer them on request"
+  default_prompt: "Use $codex-project-transfer to upload or download this project's sessions on request."
+policy:
+  allow_implicit_invocation: true
