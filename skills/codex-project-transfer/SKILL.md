@@ -9,11 +9,13 @@ Operate the bundled tool for the user. Run commands yourself and report the resu
 
 ## Runtime and installation
 
-Resolve this skill's directory from the actual `SKILL.md` path. The stable entry point is `scripts/cpt.py` inside that directory. Run it with an available Python 3.10+ (`python3` on macOS/Linux, `py -3` on Windows). It automatically prepares and uses the plugin-local `.venv`; no global pip install, pipx, environment activation, or PATH change is needed.
+All installed files must live inside the skill's own directory: `SKILL.md`, UI metadata, launcher and installer scripts, Python source, supporting docs, license, and `.venv`. Do not install a thin wrapper pointing to an external clone, use an external runtime directory, or create symlinks to the source repository.
 
-For a source checkout or native plugin, the plugin root is two directories above this skill. For a skill installed separately, read `plugin-root.json` in this skill directory to locate the persistent plugin root. Do not guess the current working directory is the plugin root.
+For a source checkout or native plugin bundle, if this skill directory does not yet contain `src/codex_project_transfer`, locate the repository two directories above it and run that repository's `scripts/install.py` with an available Python 3.10+ (`python3` on macOS/Linux, `py -3` on Windows). The installer copies the complete bundle into the selected `CODEX_HOME/skills/codex-project-transfer`, creates `.venv` there, and returns the installed skill path. Use that returned directory for every subsequent command. `--skills-dir` supports an explicitly chosen destination. Existing unrelated skills are preserved.
 
-When asked to install the skill, execute `<plugin-root>/scripts/install.py`. It prepares the local venv and registers this skill under the selected `CODEX_HOME/skills`; `--skills-dir` supports an explicitly chosen destination. Existing unrelated skills are preserved. Tell the user to open a new chat for discovery. A native Codex plugin installation can use the bundled skill directly without this additional discovery copy. Neither path installs a marketplace or starts syncing projects by itself.
+The installation is independent of the download/clone directory, which can be removed afterward. Do not copy the source `.venv`; create a fresh one on the receiving device. Tell the user to open a new chat for discovery. Installing this skill does not install a marketplace or transfer project sessions.
+
+For an installed skill, the stable entry point is its own `scripts/cpt.py`. It uses `.venv` and source within that same skill directory, without global pip installation, pipx, environment activation, or PATH changes. Its bundled `scripts/install.py` can install another complete copy if explicitly requested.
 
 In the commands below, `RUN` means the available Python plus the absolute path to this skill's `scripts/cpt.py`, passed as separate, correctly quoted arguments. Never invoke an arbitrary `cpt` from PATH. Global options precede the subcommand:
 
@@ -58,4 +60,4 @@ For a divergent continuation, inspect `status` and preserve both histories. Use 
 
 Native CLI/app-server legacy and paginated restoration have been tested on macOS with Codex 0.155.1. Desktop/VS Code GUI continuation and Windows/Linux runtime validation remain separate checks. `reconcile` verifies discovery, not a new model answer. Paginated item projection may populate only after native resume. Code, external attachments, credentials, and running processes are not transferred.
 
-Read `<plugin-root>/docs/design.md` only when debugging storage, transport, or compatibility. Keep technical implementation details out of routine user instructions.
+Read `docs/design.md` inside the installed skill directory only when debugging storage, transport, or compatibility. Keep technical implementation details out of routine user instructions.

@@ -8,7 +8,7 @@
   "interface": {
     "displayName": "Codex Project Transfer",
     "shortDescription": "Save project chats and continue on another device",
-    "longDescription": "Ask your agent to set up on-demand local session saving, Git upload, download, and restoration. Runs in a plugin-local virtual environment.",
+    "longDescription": "Ask your agent to set up on-demand local session saving, Git upload, download, and restoration. Runs in a skill-local virtual environment.",
     "developerName": "Codex Project Transfer contributors",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

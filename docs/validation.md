@@ -21,7 +21,7 @@ Coverage includes:
 - Download without publishing local-only sessions; upload without importing into the native Codex home.
 - Manual check/save without network, imports, or native processes; initialization and status do not save or create hooks.
 - Path traversal and symlink protection, OS file locks, offline snapshot retention, and native-discovery retry state.
-- Fresh plugin-local venv installation without pip, installed-skill routing without activation, idempotent reinstall, and preserving unrelated skills.
+- Fresh skill-local venv installation without pip, complete bundled source and docs, operation after the original repository is moved, reinstalling from the installed bundle alone, idempotent reinstall, and preserving unrelated skills.
 - Native `legacy` history transfer followed by Codex read/resume and verification of original user/assistant text.
 - Native `paginated` history transfer followed by `thread/resume` and `thread/items/list`, verifying original messages and the same thread ID.
 

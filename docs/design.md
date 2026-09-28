@@ -48,31 +48,34 @@ No hooks or background workers are installed. `check` explicitly exports project
 
 ## Skill packaging and local runtime
 
-The root `.codex-plugin/plugin.json` exposes `skills/codex-project-transfer`. The skill instructs the agent to perform setup and operations, inspect JSON results, and reserve user interaction for missing upload destinations, authentication, and closing active clients.
+The root plugin manifest exposes the skill instructions. Installation assembles a complete directory under the selected `CODEX_HOME/skills/codex-project-transfer`:
 
-`scripts/runtime.py` creates `<plugin-root>/.venv` with the standard library's `venv` module. Since the runtime has no third-party dependencies, pip and package downloads are unnecessary. A local `.pth` registers the bundled source inside that environment. Commands execute with its Python in isolated mode (`-I`).
+```text
+codex-project-transfer/
+├── SKILL.md
+├── agents/openai.yaml
+├── scripts/{cpt.py,runtime.py,install.py}
+├── src/codex_project_transfer/
+├── docs/{design.md,validation.md}
+├── LICENSE
+├── .cpt-install.json
+└── .venv/
+```
 
-`scripts/cpt.py` is the bootstrap/command entry point. The skill's own `scripts/cpt.py` routes to it from either a native plugin copy or a standalone registered skill. `scripts/install.py` initializes the venv and copies the skill's discovery resources to the chosen `CODEX_HOME/skills`, recording the persistent plugin root in `plugin-root.json`. It does not register a marketplace, silently replace an unrelated skill, or upload conversations. Native plugin managers can discover the bundled skill directly.
+All executable code and supporting files are copied into this directory. No source-repository pointer is retained, and the source download can be removed after installation. The marker identifies the installation format without storing an external path. Reinstalling an owned skill is supported; unrelated skills are not overwritten. The installed installer can create another complete installation without the original repository.
 
-Installation and command invocations (for agent/developer use):
+The runtime uses Python's standard `venv` module without pip or network downloads. A local `.pth` points exclusively to the installed skill's own `src/`, and commands run with that venv's Python in isolated mode (`-I`). Virtual environments are created per device rather than copied.
+
+The source-tree skill launcher directs the agent to install first. Its installed counterpart is the complete runtime launcher, so normal operations never reach outside the skill directory for project-transfer code. Native plugin bundles follow the same installation contract.
+
+Agent/developer entry points from the source repository:
 
 ```sh
 python3 scripts/install.py
-python3 scripts/cpt.py -C /path/to/project init --remote origin
-# Only on the user's corresponding request:
-python3 scripts/cpt.py -C /path/to/project upload
-python3 scripts/cpt.py -C /path/to/project download
+# Use scripts/cpt.py in the returned installed skill directory afterward.
 ```
 
-Use `py -3` on Windows when appropriate. The launcher does not require activation or a global `cpt` executable. A moved plugin must be reinstalled. Read-only plugin directories cannot host this local environment; place the plugin in a persistent writable location.
-
-Development checks:
-
-```sh
-python3 scripts/cpt.py --version
-.venv/bin/python -m unittest discover -s tests -v
-CPT_TEST_NATIVE=1 .venv/bin/python -m unittest discover -s tests -p test_native.py -v
-```
+Development from the source repository can still use `scripts/cpt.py` and a repository-local venv. That development environment is not part of an installed skill.
 
 ## Sources
 

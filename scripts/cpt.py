@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stable agent entry point; all commands run inside the plugin's local venv."""
+"""Stable agent entry point; all commands run inside the installed skill's local venv."""
 import os
 import subprocess
 import sys

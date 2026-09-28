@@ -1,4 +1,4 @@
-"""Offline, plugin-local virtual environment for the stdlib-only runtime."""
+"""Offline, bundle-local virtual environment for the stdlib-only runtime."""
 from __future__ import annotations
 
 import contextlib
@@ -40,11 +40,11 @@ def ensure_runtime(root=ROOT):
     root = root.resolve()
     source = root / "src" / "codex_project_transfer"
     if not (source / "__init__.py").is_file():
-        raise RuntimeError("Plugin source is missing; keep the complete plugin directory")
+        raise RuntimeError("Skill runtime source is missing; reinstall the complete skill bundle")
     environment = root / ".venv"
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if environment.is_symlink():
-        raise RuntimeError("The plugin .venv must be a local directory, not a symlink")
+        raise RuntimeError("The skill .venv must be a local directory, not a symlink")
     with bootstrap_lock(root):
         if not python.exists():
             if environment.exists():
@@ -56,16 +56,16 @@ def ensure_runtime(root=ROOT):
             check=True, capture_output=True, text=True, timeout=20)
         info = json.loads(probe.stdout)
         if Path(info["prefix"]).resolve() != environment or info["version"] < [3, 10]:
-            raise RuntimeError("The interpreter is not this plugin's Python 3.10+ virtual environment")
+            raise RuntimeError("The interpreter is not this skill's Python 3.10+ virtual environment")
         site = Path(info["site"]).resolve()
         if not site.is_relative_to(environment):
-            raise RuntimeError("Virtual environment site-packages escaped the plugin directory")
+            raise RuntimeError("Virtual environment site-packages escaped the skill directory")
         site.mkdir(parents=True, exist_ok=True)
         pth = site / "codex-project-transfer-local.pth"
         # ASCII source avoids locale-dependent .pth decoding on older Windows Python.
         data = "import sys; sys.path.insert(0, " + ascii(str(root / "src")) + ")\n"
         if "\n" in str(root) or "\r" in str(root):
-            raise RuntimeError("Plugin path cannot contain newlines")
+            raise RuntimeError("Skill path cannot contain newlines")
         if not pth.exists() or pth.read_text(encoding="utf-8") != data:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=site, delete=False) as stream:
                 stream.write(data)
@@ -75,5 +75,5 @@ def ensure_runtime(root=ROOT):
             "import codex_project_transfer; print(codex_project_transfer.__file__)"],
             check=True, capture_output=True, text=True, timeout=20)
         if Path(loaded.stdout.strip()).resolve() != source / "__init__.py":
-            raise RuntimeError("Virtual environment imported a different plugin installation")
+            raise RuntimeError("Virtual environment imported a different skill installation")
     return python

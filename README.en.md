@@ -32,11 +32,11 @@ Use your own private Git remote without deploying another server. A dedicated se
 
 ## First use
 
-Have Python 3.10+, Git, and Codex available. Keep this project in a persistent local directory and ask your agent:
+Have Python 3.10+, Git, and Codex available. Download this project and ask your agent:
 
 > Read `skills/codex-project-transfer/SKILL.md` in this project and install the skill.
 
-Provide the full path if necessary. Installation prepares a **virtual environment inside the plugin directory**. No global Python packages, activation, or PATH changes are required. Open a new chat afterward. Native plugin-manager installations can use the bundled skill directly.
+Provide the full path if necessary. Installation prepares a **virtual environment inside the installed skill directory**. No global Python packages, activation, or PATH changes are required. The runtime source, scripts, and supporting documents are copied into that same skill folder. The original download can be removed afterward. Open a new chat when installation finishes. Native plugin bundles can ask the agent to complete installation using the bundled instructions.
 
 ## Set up your project
 
@@ -71,4 +71,4 @@ Open chats cannot safely have their history replaced. The agent will tell you wh
 
 Native chat history is transferred; code, external attachments, credentials, and running processes are not. CLI restoration is verified on macOS. Desktop/VS Code GUI continuation and Windows/Linux real-device use still need validation. Ordinary ChatGPT web history is outside scope.
 
-Keep the plugin directory in place; reinstall if it moves.
+Install separately on each device; its virtual environment is created inside the skill folder.
