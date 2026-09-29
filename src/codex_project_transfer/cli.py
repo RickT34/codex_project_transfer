@@ -14,7 +14,7 @@ from . import __version__
 from .core import (STORE, TransferError, check_store, export_sessions,
                    fork_conflict, home_path, import_sessions, initialize,
                    json_write, local_dir, locked, repository, safe_child, store_sessions)
-from .native import reconcile
+from .native import reconcile, effective_provider
 from .transport import configure, exchange, settings
 
 
@@ -48,16 +48,16 @@ def titles_for(root, ids):
     return result
 
 
-def native_repair(root, home, ids):
+def native_repair(root, home, ids, provider=None):
     if not ids:
         return {"verified": []}
     try:
-        return reconcile(home, ids, titles=titles_for(root, ids))
+        return reconcile(home, ids, titles=titles_for(root, ids), cwd=root, provider=provider)
     except (TransferError, OSError, subprocess.SubprocessError) as exc:
         return {"verified": [], "warnings": [f"Files preserved; native discovery failed: {exc}"]}
 
 
-def sync(root, home, *, use_git=False, update_existing=False, discover=True):
+def sync(root, home, *, use_git=False, update_existing=False, discover=True, provider=None):
     result = {"export": export_sessions(root, home)}
     if use_git:
         try:
@@ -65,13 +65,13 @@ def sync(root, home, *, use_git=False, update_existing=False, discover=True):
         except (TransferError, OSError, subprocess.SubprocessError) as exc:
             # Saving local history must succeed even when the network is down.
             result["git"] = {"error": str(exc), "retry": "next explicitly requested sync"}
-    result["import"] = import_sessions(root, home, update_existing=update_existing)
+    result["import"] = import_sessions(root, home, update_existing=update_existing, provider=provider)
     if discover:
         # Retry discoveries that failed offline or because of a missing binary.
         queue_path = local_dir(root) / ("pending-" + __import__("hashlib").sha256(str(home).encode()).hexdigest()[:16] + ".json")
         pending = set(json.loads(queue_path.read_text())) if queue_path.exists() else set()
         pending.update(result["import"]["imported"])
-        result["native"] = native_repair(root, home, sorted(pending))
+        result["native"] = native_repair(root, home, sorted(pending), provider=provider)
         pending.difference_update(result["native"].get("verified", []))
         json_write(queue_path, sorted(pending))
     json_write(local_dir(root) / "last-sync.json", {"time": time.time(), **result})
@@ -93,6 +93,7 @@ def parser():
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("-C", "--project", default=".", help="Project directory (default: current directory)")
     p.add_argument("--home", help="Codex data directory (default: CODEX_HOME or ~/.codex)")
+    p.add_argument("--provider", help="Destination provider ID (default: Codex effective project configuration)")
     sub = p.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init", help="Create a Git-friendly session store")
     init.add_argument("--remote", help="Remember the named remote for manually requested transfers")
@@ -132,14 +133,16 @@ def perform(args):
     root = repository(args.project)
     if args.command == "run":
         check_closed()
+        provider = args.provider or effective_provider(home, root)
         with locked(local_dir(root) / "sync.lock"):
-            restored = import_sessions(root, home, update_existing=True)
-            restored["native"] = native_repair(root, home, restored["imported"])
+            restored = import_sessions(root, home, update_existing=True, provider=provider)
+            restored["native"] = native_repair(root, home, restored["imported"], provider=provider)
         print(json.dumps(restored, ensure_ascii=False), file=sys.stderr)
         command = args.codex_args
         if command[:1] == ["--"]:
             command = command[1:]
-        code = subprocess.call(["codex", *command], cwd=root, env=dict(os.environ, CODEX_HOME=str(home)))
+        overrides = ["-c", "model_provider=" + json.dumps(provider)] if args.provider else []
+        code = subprocess.call(["codex", *overrides, *command], cwd=root, env=dict(os.environ, CODEX_HOME=str(home)))
         return {"codex_exit_code": code}
     with locked(local_dir(root) / "sync.lock"):
         if args.command == "init":
@@ -160,6 +163,7 @@ def perform(args):
             update = getattr(args, "update_existing", False)
             if update:
                 check_closed()
+            provider = (args.provider or effective_provider(home, root)) if args.command == "download" else None
             result = {}
             if args.command == "upload":
                 result["export"] = export_sessions(root, home)
@@ -169,29 +173,31 @@ def perform(args):
             except (TransferError, OSError, subprocess.SubprocessError) as exc:
                 result["git"] = {"error": str(exc), "retry": "next explicitly requested transfer"}
             if args.command == "download" and not result["git"].get("error"):
-                result["import"] = import_sessions(root, home, update_existing=update)
+                result["import"] = import_sessions(root, home, update_existing=update, provider=provider)
                 if not args.no_reconcile:
-                    result["native"] = native_repair(root, home, result["import"]["imported"])
+                    result["native"] = native_repair(root, home, result["import"]["imported"], provider=provider)
             json_write(local_dir(root) / "last-sync.json", {"time": time.time(), **result})
             return result
         if args.command == "import":
             if args.update_existing and not args.dry_run:
                 check_closed()
-            result = import_sessions(root, home, update_existing=args.update_existing, dry_run=args.dry_run)
+            provider = args.provider or effective_provider(home, root)
+            result = import_sessions(root, home, update_existing=args.update_existing, dry_run=args.dry_run, provider=provider)
             if not args.dry_run and not args.no_reconcile:
-                result["native"] = native_repair(root, home, result["imported"])
+                result["native"] = native_repair(root, home, result["imported"], provider=provider)
             return result
         if args.command == "sync":
             update = getattr(args, "update_existing", False)
             if update:
                 check_closed()
+            provider = args.provider or effective_provider(home, root)
             result = sync(root, home,
                           use_git=not args.local,
-                          update_existing=update, discover=not getattr(args, "no_reconcile", False))
+                          update_existing=update, discover=not getattr(args, "no_reconcile", False), provider=provider)
             return result
         if args.command == "reconcile":
             ids = [rows[0]["payload"]["id"] for _, rows in store_sessions(check_store(root))]
-            return native_repair(root, home, ids)
+            return native_repair(root, home, ids, provider=args.provider)
         if args.command == "fork":
             return {"fork_id": fork_conflict(root, args.session_id, args.sha256)}
         if args.command == "status":

@@ -65,6 +65,8 @@ Setup is local and does not save or transfer chats. No hook configuration or tru
 
 On another device, prepare the same code repository and plugin, then ask the agent to configure the project and download sessions. Failed transfers preserve local records; ask again when ready to retry.
 
+The devices may use different model providers. Newly imported sessions use the receiving project’s provider while archived metadata and historical messages stay intact. Configure a working provider, model, and authentication on the receiving device first.
+
 Open chats cannot safely have their history replaced. The agent will tell you when clients must close and provide the necessary follow-up. Conflicting continuations are kept for you to choose between.
 
 ## Availability

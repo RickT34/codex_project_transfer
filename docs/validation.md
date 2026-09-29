@@ -22,6 +22,9 @@ Coverage includes:
 - Manual check/save without network, imports, or native processes; initialization and status do not save or create hooks.
 - Path traversal and symlink protection, OS file locks, offline snapshot retention, and native-discovery retry state.
 - Fresh skill-local venv installation without pip, complete bundled source and docs, operation after the original repository is moved, reinstalling from the installed bundle alone, idempotent reinstall, and preserving unrelated skills.
+- Cross-provider import with a source provider unavailable on the receiver, destination-specific list visibility, native resume, and archive preservation for both native history modes.
+- Provider-neutral round-trip comparison, no false forks after a continued chat is re-exported, and preservation of real message-level differences.
+- Native configuration trust policy and explicit provider selection without an automatic probe.
 - Native `legacy` history transfer followed by Codex read/resume and verification of original user/assistant text.
 - Native `paginated` history transfer followed by `thread/resume` and `thread/items/list`, verifying original messages and the same thread ID.
 

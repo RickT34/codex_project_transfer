@@ -82,6 +82,53 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(imported[1:], self.rows[1:])
         self.assertEqual(core.import_sessions(self.b, self.hb)["unchanged"], [self.sid])
 
+    def test_provider_adaptation_preserves_archive_and_roundtrip_continuation(self):
+        self.carry()
+        archive = self.b / core.STORE / "sessions" / (self.sid + ".jsonl")
+        before = archive.read_bytes()
+        imported = core.import_sessions(self.b, self.hb, provider="different-provider")
+        self.assertEqual(imported["provider_adapted"], [self.sid])
+        path = next(core.session_files(self.hb))
+        local = core.read_rollout(path)
+        self.assertEqual(local[0]["payload"]["model_provider"], "different-provider")
+        self.assertEqual(local[1:], self.rows[1:])
+        self.assertEqual(archive.read_bytes(), before)
+        self.assertEqual(core.export_sessions(self.b, self.hb)["conflicts"], [])
+        self.assertEqual(archive.read_bytes(), before)
+        core.atomic_write(path, core.serialize(append(local, "continuation from B")))
+        self.assertEqual(core.export_sessions(self.b, self.hb)["conflicts"], [])
+        self.assertEqual(core.read_rollout(archive)[0]["payload"]["model_provider"], "openai")
+        import shutil
+        shutil.copytree(self.b / core.STORE, self.a / core.STORE, dirs_exist_ok=True)
+        restored = core.import_sessions(self.a, self.ha, update_existing=True, provider="openai")
+        self.assertEqual(restored["conflicts"], [])
+        self.assertEqual(restored["imported"], [self.sid])
+        self.assertIn("continuation from B", self.source.read_text())
+
+
+    def test_provider_adaptation_does_not_hide_actual_message_divergence(self):
+        local = copy.deepcopy(self.rows)
+        other = copy.deepcopy(self.rows)
+        other[0]["payload"]["model_provider"] = "destination"
+        other[1]["payload"]["model_provider"] = "changed historical value"
+        self.assertEqual(core.relation(local, other), "diverged")
+
+    def test_cli_resolves_destination_provider_before_importing(self):
+        self.carry()
+        with patch("codex_project_transfer.cli.effective_provider", return_value="effective-provider"):
+            result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb), "import", "--no-reconcile"]))
+        self.assertEqual(result["provider"], "effective-provider")
+        self.assertEqual(core.read_rollout(next(core.session_files(self.hb)))[0]["payload"]["model_provider"], "effective-provider")
+
+
+
+    def test_explicit_provider_works_without_automatic_configuration_probe(self):
+        self.carry()
+        with patch("codex_project_transfer.cli.effective_provider", side_effect=AssertionError("automatic probe")):
+            result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb),
+                                                  "--provider", "chosen", "import", "--no-reconcile"]))
+        self.assertEqual(result["provider"], "chosen")
+
     def test_only_this_project(self):
         other = put(self.ha, fixture(self.base / "unrelated"))
         result = core.export_sessions(self.a, self.ha)
@@ -319,7 +366,7 @@ class GitTransportTests(unittest.TestCase):
         put(self.hb, local_only)
         core.export_sessions(self.b, self.hb)
         before = core.git(remote, "rev-parse", "refs/heads/codex-sessions").stdout
-        result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb), "download", "--no-reconcile"]))
+        result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb), "--provider", "openai", "download", "--no-reconcile"]))
         self.assertFalse(result["git"]["pushed"])
         self.assertNotIn("export", result)
         self.assertIn(self.sid, result["import"]["imported"])

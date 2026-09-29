@@ -15,12 +15,13 @@ from . import __version__
 
 
 class NativeClient:
-    def __init__(self, home, executable="codex", timeout=20):
+    def __init__(self, home, executable="codex", timeout=20, cwd=None):
         self.home = home
         self.executable = executable
         self.timeout = timeout
         self.messages = queue.Queue()
         self.counter = 0
+        self.cwd = cwd
 
     def __enter__(self):
         env = dict(os.environ, CODEX_HOME=str(self.home))
@@ -28,7 +29,7 @@ class NativeClient:
         try:
             self.process = subprocess.Popen([self.executable, "app-server", "--stdio"],
                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                            stderr=self.logs, env=env)
+                                            stderr=self.logs, env=env, cwd=self.cwd)
         except BaseException:
             self.logs.close()
             raise
@@ -99,17 +100,37 @@ class NativeClient:
         self.logs.close()
 
 
-def reconcile(home, ids, executable="codex", titles=None):
+def effective_provider(home, cwd, executable="codex"):
+    """Let Codex resolve trusted project/user/system config layers; never read keys."""
+    try:
+        with NativeClient(home, executable, cwd=cwd) as client:
+            result = client.call("config/read", {"cwd": str(cwd), "includeLayers": False})
+            provider = result["config"].get("model_provider") or "openai"
+            if not isinstance(provider, str) or not provider.strip():
+                raise TransferError("Codex returned an invalid model_provider")
+            return provider
+    except (OSError, subprocess.SubprocessError, KeyError, TransferError) as exc:
+        raise TransferError("Cannot resolve the destination provider with Codex config/read; "
+                            "configure Codex or pass --provider PROVIDER_ID explicitly") from exc
+
+
+def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=None):
     ids = sorted({validate_id(sid) for sid in ids})
     if not ids:
         return {"verified": []}
     result = {"verified": [], "warnings": []}
-    with NativeClient(home, executable) as client:
+    with NativeClient(home, executable, cwd=cwd) as client:
+        if provider is None:
+            config = client.call("config/read", {"cwd": str(cwd) if cwd else None, "includeLayers": False})
+            provider = config["config"].get("model_provider") or "openai"
+        result["provider"] = provider
         result["codex_version"] = client.version
         for sid in ids:
             thread = client.call("thread/read", {"threadId": sid, "includeTurns": False})
             if thread.get("thread", {}).get("id") != sid:
                 raise TransferError("Codex returned a different thread")
+            if thread["thread"].get("modelProvider") != provider:
+                result["warnings"].append(f"{sid}: recorded provider differs from {provider}; this existing native session was not adapted")
             if titles and sid in titles:
                 client.call("thread/name/set", {"threadId": sid, "name": titles[sid]})
         found = set()
@@ -117,7 +138,7 @@ def reconcile(home, ids, executable="codex", titles=None):
         cursors = set()
         for _ in range(1000):
             page = client.call("thread/list", {"limit": 100, "cursor": cursor,
-                                               "modelProviders": [], "useStateDbOnly": True})
+                                               "modelProviders": [provider], "useStateDbOnly": False})
             found.update(t["id"] for t in page.get("data", []))
             cursor = page.get("nextCursor")
             if not cursor:
@@ -125,7 +146,11 @@ def reconcile(home, ids, executable="codex", titles=None):
             if cursor in cursors:
                 raise TransferError("Codex returned a repeated pagination cursor")
             cursors.add(cursor)
-        result["verified"] = sorted(set(ids) & found)
-        if set(ids) - found:
-            result["warnings"].append("Some threads were readable but absent from the default interactive list")
+        # Verify the actual read route as well as the provider-filtered list.
+        for sid in sorted(set(ids) & found):
+            actual = client.call("thread/read", {"threadId": sid, "includeTurns": False})
+            if actual.get("thread", {}).get("modelProvider") == provider:
+                result["verified"].append(sid)
+        if set(ids) - set(result["verified"]):
+            result["warnings"].append("Some threads were readable but absent from the destination provider's interactive list")
     return result

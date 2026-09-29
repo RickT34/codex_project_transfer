@@ -225,7 +225,13 @@ def map_paths(rows, mapper):
 
 def relation(existing, incoming):
     # Compare serialized JSON rather than Python equality (True != 1 in JSON).
-    for a, b in zip(existing, incoming):
+    for index, (a, b) in enumerate(zip(existing, incoming)):
+        if index == 0 and a.get("type") == b.get("type") == "session_meta":
+            # The header provider is a receiving-machine routing choice, not
+            # conversation content. Provider fields in messages/turns still count.
+            a, b = copy.deepcopy(a), copy.deepcopy(b)
+            a["payload"].pop("model_provider", None)
+            b["payload"].pop("model_provider", None)
         if encode(a) != encode(b):
             return "diverged"
     if len(existing) == len(incoming):
@@ -266,6 +272,14 @@ def merge_snapshot(store, rows):
     result = "added"
     if target.exists():
         previous = read_rollout(target)
+        # Preserve the archive's original provider when exporting a locally
+        # adapted continuation. Never rewrite historical turn/model fields.
+        rows = copy.deepcopy(rows)
+        original_provider = previous[0]["payload"].get("model_provider")
+        if original_provider is None:
+            rows[0]["payload"].pop("model_provider", None)
+        else:
+            rows[0]["payload"]["model_provider"] = original_provider
         result = relation(previous, rows)
         if result in ("equal", "ahead"):
             return result
@@ -352,14 +366,16 @@ def store_sessions(store):
         yield path, rows
 
 
-def import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=False):
+def import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=False, provider=None):
+    if provider is not None and (not isinstance(provider, str) or not provider.strip() or "\n" in provider or "\r" in provider):
+        raise TransferError("Target provider must be a nonempty provider ID")
     if dry_run:
-        return _import_sessions(root, home, update_existing=update_existing, exclude=exclude, dry_run=True)
+        return _import_sessions(root, home, update_existing=update_existing, exclude=exclude, dry_run=True, provider=provider)
     with locked(safe_child(home, "cpt-import.lock")):
-        return _import_sessions(root, home, update_existing=update_existing, exclude=exclude)
+        return _import_sessions(root, home, update_existing=update_existing, exclude=exclude, provider=provider)
 
 
-def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=False):
+def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=False, provider=None):
     store = check_store(root)
     roots = roots_for(root)
     known = {}
@@ -370,7 +386,8 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
             except TransferError:
                 continue
         known.setdefault(meta["id"], []).append(path)
-    result = {"imported": [], "unchanged": [], "pending": [], "conflicts": [], "warnings": []}
+    result = {"imported": [], "unchanged": [], "pending": [], "conflicts": [], "warnings": [],
+              "provider": provider, "provider_adapted": []}
     plans = []
     for _, portable in store_sessions(store):
         sid = portable[0]["payload"]["id"]
@@ -379,6 +396,8 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
         if not is_portable(portable[0]["payload"]["cwd"]):
             raise TransferError("Snapshot has an unmapped project directory")
         incoming = map_paths(portable, lambda v: native_path(v, root))
+        if provider is not None:
+            incoming[0]["payload"]["model_provider"] = provider
         matches = known.get(sid, [])
         if len(matches) > 1:
             result["warnings"].append(f"{sid}: multiple local rollouts; not modified")
@@ -403,11 +422,14 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
             if not update_existing:
                 result["pending"].append(sid)
                 continue
-            # Preserve existing bytes; only append genuinely new records.
+            # Preserve the existing native session's routing and bytes. Only
+            # append new conversation records; provider adaptation is for new imports.
             data = original + (b"\n" if original and not original.endswith(b"\n") else b"")
             data += serialize(incoming[len(local):])
         else:
             data = serialize(incoming)
+            if provider is not None and portable[0]["payload"].get("model_provider") != provider:
+                result["provider_adapted"].append(sid)
         plans.append((sid, target, original, data))
         result["imported"].append(sid)
     if dry_run:

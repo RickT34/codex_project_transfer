@@ -50,6 +50,14 @@ Perform remote operations only in response to the user's upload, download, or sy
 
 On failure, preserve snapshots, report the error, and stop. Do not silently start polling or schedule future retries. A successful exit code alone is not proof of complete transfer: inspect errors, warnings, pending updates, conflicts, and native verification in the JSON result.
 
+## Destination provider
+
+New native sessions are bound to the receiving project's effective `model_provider`, resolved through Codex `config/read`. The archive keeps its original provider and historical messages. Do not copy credentials or provider endpoints from the sending machine.
+
+If the user runs a profile or override that differs from the configuration visible to the tool, use the global `--provider PROVIDER_ID` before the subcommand, with the provider ID they selected. The ID is a provider configuration key, not a model name. If automatic resolution fails, report the error and obtain an explicit choice; do not silently fall back to the sender's provider. `--no-reconcile` skips discovery only; configuration resolution still occurs unless `--provider` is supplied.
+
+Inspect `provider`, `provider_adapted`, and native `verified`/warnings in the result. Verification uses the destination-provider list and the actual thread metadata. This applies to newly imported sessions; existing native sessions retain their routing. Do not add database patches or migration procedures for previously registered sessions.
+
 ## Existing sessions and conflicts
 
 Imports do not overwrite already-open chats. `pending` means newer history is saved but not applied. Tell the user to close Codex/ChatGPT/VS Code first; after that, `import --update-existing` can apply the already-downloaded fast-forwards locally. An agent inside the active client cannot truthfully promise to close itself and finish the operation. If a user needs to finish outside the client, provide the exact local-venv command for `run -- resume --all`, with real paths, as the necessary handoff. This command only imports already-saved local history and launches Codex. It does not save on startup/exit or fetch/upload.
