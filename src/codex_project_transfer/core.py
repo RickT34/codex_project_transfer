@@ -91,10 +91,8 @@ def locked(path):
     """An OS-released lock: process crashes cannot leave a stale lock behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+b") as f:
-        f.seek(0)
-        if not f.read(1):
-            f.write(b"0")
-            f.flush()
+        # Windows byte locks deny reads through competing handles. Lock first,
+        # without inspecting file contents; locking beyond EOF is supported.
         f.seek(0)
         try:
             if os.name == "nt":

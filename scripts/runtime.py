@@ -15,17 +15,18 @@ ROOT = Path(__file__).resolve().parents[1]
 @contextlib.contextmanager
 def bootstrap_lock(root):
     with (root / ".cpt-bootstrap.lock").open("a+b") as stream:
+        # A Windows byte lock also blocks reads. Empty files can be locked past
+        # EOF, so acquisition needs no initialization read or write.
         stream.seek(0)
-        if not stream.read(1):
-            stream.write(b"0")
-            stream.flush()
-        stream.seek(0)
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError("Another skill runtime setup is running; retry shortly") from exc
         try:
             yield
         finally:
