@@ -73,6 +73,115 @@ agent 会完成本地设置并记住远端，不会立即保存、上传或下�
 
 分叉会话会连同恢复所需的父历史一起保存。如果提示缺少父历史，需要在原设备上重新导出完整会话；工具会明确报错，不会把不完整的记录当作导入成功。
 
+## 手动使用命令行
+
+也可以直接在终端操作，不经过 agent。下面的 `/path/to/project` 都指 **Git 项目目录**，不是 `.codex-chats` 目录。
+
+### 1. 安装并准备命令
+
+如果尚未安装，在下载的本项目目录中运行一次：
+
+```bash
+# macOS / Linux
+python3 scripts/install.py
+```
+
+Windows PowerShell 使用 `py -3 scripts/install.py`。安装器会把完整工具和局部虚拟环境放进 skill 文件夹；已安装则跳过这一步。
+
+在当前终端定义一个简写，后续就可以使用 `cpt`。它不是全局安装的命令，也不需要激活虚拟环境。
+
+macOS / Linux（bash 或 zsh）：
+
+```bash
+CPT_SCRIPT="${CODEX_HOME:-$HOME/.codex}/skills/codex-project-transfer/scripts/cpt.py"
+cpt() { python3 "$CPT_SCRIPT" "$@"; }
+```
+
+Windows PowerShell：
+
+```powershell
+$CptRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
+$CptScript = Join-Path $CptRoot "skills\codex-project-transfer\scripts\cpt.py"
+function cpt { py -3 $CptScript @args }
+```
+
+如果安装时指定了其他目录，将脚本路径替换成安装器返回的 skill 目录下的 `scripts/cpt.py`。简写只在当前终端有效。
+
+### 2. 从 Codex 导出到项目
+
+```bash
+# 首次使用该项目时初始化，不会上传或保存会话
+cpt -C "/path/to/project" init
+
+# 将项目会话及所需父历史保存到项目的 .codex-chats/
+cpt -C "/path/to/project" export
+
+# 查看本地状态，不上传或下载
+cpt -C "/path/to/project" status
+```
+
+如果想一次完成“保存并检查结果”，可用 `check` 代替 `export`。
+
+首次搬到另一台设备时，将**整个 `.codex-chats/` 文件夹**放到那台设备的对应 Git 项目根目录。可以通过文件复制或自己管理的 Git 提交携带；不要只拷贝单个 JSONL，分叉会话可能依赖其他文件。两端都已有会话快照时，可使用下方的上传/下载流程来保留冲突版本。
+
+### 3. 从项目导入到 Codex
+
+在接收设备安装好本工具，并准备好目标项目和 Codex 的 provider 配置，然后运行：
+
+```bash
+# 预览导入计划，不写入会话记录
+cpt -C "/path/to/project" import --dry-run
+
+# 正式导入，并进行原生登记与校验
+cpt -C "/path/to/project" import
+```
+
+这两条命令使用项目中已有的 `.codex-chats/`，不会从 Git 远端下载。完成后，可以在 Codex 中选择会话，或使用返回的会话 ID：
+
+```bash
+codex -C "/path/to/project" resume SESSION_ID
+```
+
+默认读取接收端项目的有效 provider。如需显式指定，例如 `crs`：
+
+```bash
+cpt -C "/path/to/project" --provider crs import
+```
+
+`-C`、`--provider`、`--home` 等全局选项放在子命令之前。`--home` 可指定其他 Codex 数据目录。
+
+### 4. 通过 Git 远端传输
+
+如果希望工具负责传输，在两台设备上分别配置一次已存在的远端：
+
+```bash
+cpt -C "/path/to/project" init --remote origin
+```
+
+然后按需选择操作：
+
+```bash
+# 发送设备：先保存本机项目会话，再上传
+cpt -C "/path/to/project" upload
+
+# 接收设备：下载并导入，不上传本机会话
+cpt -C "/path/to/project" download
+
+# 当前设备：执行一次双向同步
+cpt -C "/path/to/project" sync
+```
+
+传输使用远端的独立 `codex-sessions` 分支，不会自动提交项目代码。这些命令都是单次执行。
+
+### 5. 待更新、冲突和错误
+
+- 返回 `pending`：文件中有可追加的历史。**先关闭 Codex、ChatGPT 桌面端和 VS Code**，再运行 `cpt -C "/path/to/project" import --update-existing`。工具会备份原记录后追加；这个选项不会强行覆盖分叉。
+- 返回 `conflicts`：双方历史已经分叉。先保留两份，请 agent 检查差异；不要手动拼接 JSONL。
+- 提示缺少父历史：回到原设备重新导出完整会话。反复导入无法补出缺失内容。
+- 文件已导入但登记失败：检查警告，修复原因后运行 `cpt -C "/path/to/project" reconcile` 重试校验。
+
+命令输出为 JSON。检查 `warnings`、`pending`、`conflicts` 和 `native.verified`；非零退出码表示失败或仍有待处理事项，不能只看到 `imported` 就认为恢复完成。
+
 ## 使用范围
 
 - 同步的是原生 Codex 会话；代码、外部附件、登录凭据和运行中的程序需要另行处理。
