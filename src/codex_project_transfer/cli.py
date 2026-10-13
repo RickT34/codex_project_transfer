@@ -13,7 +13,7 @@ import time
 from . import __version__
 from .core import (STORE, TransferError, check_store, export_sessions,
                    fork_conflict, home_path, import_sessions, initialize,
-                   json_write, local_dir, locked, repository, safe_child, store_sessions, validate_store_history)
+                   json_write, local_dir, locked, repository, safe_child, store_sessions, validate_store_history, title_order)
 from .native import reconcile, effective_provider
 from .transport import configure, exchange, settings
 
@@ -42,9 +42,8 @@ def titles_for(root, ids):
     for sid in ids:
         path = safe_child(store, f"titles/{sid}.json")
         if path.exists():
-            value = json.loads(path.read_text())
-            if isinstance(value.get("title"), str):
-                result[sid] = value["title"]
+            value = json.loads(path.read_text(encoding="utf-8"))
+            result[sid] = title_order(value)[1]
     return result
 
 

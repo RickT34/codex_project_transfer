@@ -1,6 +1,6 @@
 {
   "name": "codex-project-transfer",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Save and synchronize native Codex project chats through an agent-operated skill.",
   "author": {"name": "Codex Project Transfer contributors"},
   "license": "MIT",

@@ -143,7 +143,11 @@ cpt import ./ --dry-run
 cpt import ./
 ```
 
-这两条命令使用项目中已有的 `.codex-chats/`，不会从 Git 远端下载。完成后，可以在 Codex 中选择会话，或使用返回的会话 ID：
+这两条命令使用项目中已有的 `.codex-chats/`，不会从 Git 远端下载。导入会恢复存档中的自动生成标题和手动命名；再次导出会更新已变化的标题，无需重新创建会话存档。已有会话的标题也会恢复，不要求使用 `--update-existing`。
+
+**如果已打开的 ChatGPT 桌面端 / Codex 桌面端没有显示新会话或标题，请手动刷新列表；仍未显示时重启客户端。** CPT 会在 `native.ui_refresh` 中提示，不会自动退出、重启或后台控制客户端。`native.verified` 只表示原生服务确认了会话，不代表当前窗口的缓存已刷新。
+
+完成后，可以在 Codex 中选择会话，或使用返回的会话 ID：
 
 ```bash
 codex resume SESSION_ID
@@ -187,6 +191,8 @@ cpt sync ./
 - 导出提示缺少父历史：确认 `--home` 指向正确的 Codex 数据目录，并从原设备或备份恢复报错中的历史文件；也可用 `--skip-incomplete` 先导出其余完整会话。
 - 导入提示缺少父历史：从原设备重新导出并携带整个 `.codex-chats/`。反复导入无法补出缺失内容。
 - 文件已导入但登记失败：检查警告，修复原因后运行 `cpt reconcile ./` 重试校验。
+
+导出结果中的 `titles_updated` 列出本次保存或更新的标题，导入结果中的 `native.titles_restored` 列出已验证恢复的标题。使用 `--no-reconcile` 会跳过原生标题恢复与校验；之后可运行 `cpt reconcile ./` 完成。
 
 命令输出为 JSON。检查 `skipped`、`warnings`、`pending`、`conflicts` 和 `native.verified`；非零退出码表示失败或仍有待处理事项，不能只看到 `imported` 就认为恢复完成。
 

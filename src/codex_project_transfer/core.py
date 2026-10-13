@@ -392,19 +392,45 @@ def session_files(home):
 
 
 def metadata_titles(home):
-    """Best-effort read-only metadata; a changing SQLite schema is not imported."""
+    """Read UI names, not the first-message preview stored in threads.title."""
     result = {}
-    for path in sorted(home.glob("state_*.sqlite")):
-        if path.is_symlink():
-            continue
+    index = home / "session_index.jsonl"
+    if index.is_file() and not index.is_symlink():
         try:
-            with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)) as c:
-                for sid, title in c.execute("SELECT id, title FROM threads"):
-                    if title:
-                        result[sid] = title
+            with index.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue  # An append may still be in progress.
+                    if (isinstance(row, dict) and isinstance(row.get("id"), str)
+                            and isinstance(row.get("thread_name"), str) and row["thread_name"].strip()):
+                        result[row.get("id")] = row["thread_name"]
+        except OSError:
+            pass
+    databases = [p for p in home.glob("state_*.sqlite") if p.stem[6:].isdigit() and not p.is_symlink()]
+    if databases:
+        path = max(databases, key=lambda p: int(p.stem[6:]))
+        try:
+            with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as c:
+                for sid, name, preview in c.execute("SELECT id, name, title FROM threads"):
+                    if isinstance(name, str) and name.strip():
+                        result[sid] = name
+                    elif sid not in result and isinstance(preview, str) and preview.strip():
+                        result[sid] = preview
         except sqlite3.Error:
-            continue
+            pass
     return result
+
+
+def title_order(value):
+    """A title's revision advances only when the exported name changes."""
+    if not isinstance(value, dict):
+        raise TransferError("Invalid title metadata")
+    title, revision = value.get("title"), value.get("revision", 0)
+    if not isinstance(title, str) or not title.strip() or type(revision) is not int or revision < 0:
+        raise TransferError("Invalid title metadata")
+    return revision, title
 
 
 class NativeSessionIndex(dict):
@@ -662,10 +688,15 @@ def export_sessions(root, home, *, skip_incomplete=False):
             result["exported"].append(sid)
     rebase_store(store)
     titles = metadata_titles(home)
+    result["titles_updated"] = []
     for sid in portable:
         path = safe_child(store, f"titles/{sid}.json")
-        if sid in titles and not path.exists():
-            json_write(path, {"title": titles[sid]})
+        if sid in titles:
+            previous = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"title": titles[sid]}
+            revision, old_title = title_order(previous)
+            if not path.exists() or old_title != titles[sid]:
+                json_write(path, {"title": titles[sid], "revision": revision + 1})
+                result["titles_updated"].append(sid)
     return result
 
 

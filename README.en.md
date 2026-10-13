@@ -141,7 +141,11 @@ cpt import ./ --dry-run
 cpt import ./
 ```
 
-These commands read the project's existing `.codex-chats/`; they do not download from a remote. Select the imported chat in Codex, or resume an ID returned by the tool:
+These commands read the project's existing `.codex-chats/`; they do not download from a remote. Import restores saved generated titles and manual names. Export again to capture later title changes without recreating the archive. Titles on existing chats are restored too, without requiring `--update-existing`.
+
+**If the open ChatGPT desktop / Codex desktop app does not show the imported chats or titles, refresh its list manually; restart the client if they remain absent.** CPT reports this in `native.ui_refresh` and never quits, restarts, or controls the client in the background. `native.verified` confirms native discovery, not that the current window has refreshed its cache.
+
+Select the imported chat in Codex, or resume an ID returned by the tool:
 
 ```sh
 codex resume SESSION_ID
@@ -185,6 +189,8 @@ Transfers use the remote's dedicated `codex-sessions` branch without automatical
 - Missing parent during export: verify that `--home` selects the correct Codex data directory, then recover the named history file from the original device or a backup. Use `--skip-incomplete` to export other complete chats first.
 - Missing parent during import: re-export on the source device and carry the entire `.codex-chats/` directory. Repeated imports cannot recreate missing records.
 - Files imported but registration failed: inspect the warnings, address their cause, then retry with `cpt reconcile ./`.
+
+`titles_updated` in export lists saved or updated names; `native.titles_restored` in import lists names whose restoration was verified. `--no-reconcile` skips native title restoration and verification; run `cpt reconcile ./` later to finish.
 
 Output is JSON. Inspect `skipped`, `warnings`, `pending`, `conflicts`, and `native.verified`. A nonzero exit code means failure or outstanding work; an `imported` entry alone does not prove restoration completed.
 

@@ -10,7 +10,7 @@ import tempfile
 
 from .core import (FORMAT, STORE, MAX_BYTES, TransferError, atomic_write, check_store,
                    git, is_portable, map_paths, merge_snapshot, native_path, parse, safe_child, validate_id,
-                   rebase_store, validate_store_history)
+                   rebase_store, validate_store_history, title_order)
 
 
 def settings(root):
@@ -103,8 +103,7 @@ def exchange(root, remote=None, branch=None, *, publish=True):
             elif "/titles/" in path:
                 validate_id(Path(path).stem)
                 title = json.loads(data)
-                if not isinstance(title.get("title"), str):
-                    raise TransferError("Invalid title metadata")
+                title_order(title)
         from .history import ordered
         ordered({rows[0]["payload"]["id"]: rows for path, rows in parsed if "/sessions/" in path})
         for path, rows in parsed:
@@ -121,8 +120,9 @@ def exchange(root, remote=None, branch=None, *, publish=True):
         for path, data in remote_files.items():
             if "/titles/" in path:
                 target = safe_child(root, path)
-                # Stable tie-breaking avoids endless title-only Git commits.
-                if not target.exists() or data < target.read_bytes():
+                # Later observed renames win; concurrent revisions converge
+                # deterministically without relying on device wall clocks.
+                if not target.exists() or title_order(json.loads(data)) > title_order(json.loads(target.read_bytes())):
                     atomic_write(target, data)
         rebase_store(store)
     if not publish:

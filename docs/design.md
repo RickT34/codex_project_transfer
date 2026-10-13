@@ -28,7 +28,9 @@ If no usable matching registry entry exists, export/reconciliation can still sel
 
 When an adapted continuation is exported, its archive retains the provider provenance of the matching archived prefix, so changing machines does not introduce a provider-only diff or false fork.
 
-Initial title labels travel separately. Subsequent local renames are not a distributed rename log. A deterministic title tie-break prevents repeated Git commits when devices have different initial labels.
+UI titles travel separately. Read `threads.name` from the numerically newest state database, use the append-only `session_index.jsonl` name when no database name is available, and use `threads.title` (the first-message preview) only as a last resort. All reads are read-only. Each changed exported title increments its stored revision; unchanged titles do not rewrite metadata. Git selects the larger `(revision, title)` pair: later observed revisions win and concurrent equal revisions converge deterministically by title. This is a label selection rule, not a wall-clock ordering or a merged rename history. The initial revision baseline is zero when unspecified.
+
+Reconciliation applies `thread/name/set` to both new and unchanged native chats, verifies `thread/read.name`, and reports `titles_restored`. Export reports `titles_updated`. `--no-reconcile` defers title application as well as discovery.
 
 ## Paginated history dependencies
 
@@ -53,6 +55,8 @@ Manual fast-forward updates and `cpt run` require clients to be closed. There is
 Per-repository and per-Codex-home OS file locks serialize CPT operations. Before writing, import also checks that its target did not change since planning. These locks do not lock Codex itself. Snapshots and target files are replaced atomically; a multi-session import can be retried after a crash. Import validates all planned records before writing.
 
 The native adapter runs a short-lived `codex app-server --stdio` against the selected home, checks the returned home, calls `thread/read`, optionally `thread/name/set`, and verifies `thread/list` filtered to the destination provider plus the provider returned by `thread/read`. Using an all-provider list would falsely report visibility when the client’s normal list hides the imported session. This is **discovery verification**, not a model-generation or GUI test. Discovery failure leaves files intact and enters a retry queue for later manually requested syncs. Both newly imported and unchanged IDs are checked. The CLI returns a nonzero status for warnings, unresolved conflicts, pending updates, or native verification failure instead of treating a file copy as complete success. No direct SQLite or session-index writes.
+
+The short-lived app-server does not refresh another process's desktop UI cache. The result includes an informational `ui_refresh` hint; this hint alone does not make a successful command fail. The user refreshes or restarts an open desktop client when needed. No automatic restart or background UI control is installed. The official app-server API documents name notifications on its transport, but those are not a desktop-wide refresh guarantee: https://developers.openai.com/codex/app-server/ .
 
 On Codex 0.155.1, a paginated transcript's message projection can remain empty until `thread/resume` initializes its recorder. Reconciliation initializes required ancestors in ancestry order using native `thread/resume`, with lifecycle hooks disabled and without starting a model turn. Codex builds its own history projections and may append normal runtime-setting records to those native copies. No direct SQLite writes are used. Dependency records need not appear as standalone interactive chats; their readable routing metadata is verified. The native integration test restores a real nested fork and checks inherited messages via `thread/items/list`. Do not treat a successful metadata-only read as proof that message history was restored.
 

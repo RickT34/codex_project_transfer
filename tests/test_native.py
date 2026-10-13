@@ -141,6 +141,9 @@ class NativeTests(unittest.TestCase):
                 rows[0]["payload"]["model_provider"] = "source-only"
             sid = rows[0]["payload"]["id"]
             put(ha, rows)
+            with NativeClient(ha, cwd=a) as client:
+                client.call("thread/read", {"threadId": sid, "includeTurns": False})
+                client.call("thread/name/set", {"threadId": sid, "name": "Synthetic portable session"})
             core.export_sessions(a, ha)
             shutil.copytree(a / core.STORE, b / core.STORE, dirs_exist_ok=True)
             archived = (b / core.STORE / "sessions" / (sid + ".jsonl")).read_bytes()
@@ -155,11 +158,15 @@ class NativeTests(unittest.TestCase):
             imported = core.import_sessions(b, hb, provider=provider)
             if cross_provider:
                 self.assertEqual(imported["provider_adapted"], [sid])
-            repaired = reconcile(hb, [sid], titles={sid: "Synthetic portable session"}, cwd=b)
+            from codex_project_transfer.cli import native_repair
+            repaired = native_repair(b, hb, [sid])
             self.assertEqual(repaired["verified"], [sid])
+            self.assertEqual(repaired["titles_restored"], [sid])
+            self.assertFalse(repaired["ui_refresh"]["automatic"])
             self.assertEqual((b / core.STORE / "sessions" / (sid + ".jsonl")).read_bytes(), archived)
             with NativeClient(hb) as client:
                 metadata = client.call("thread/read", {"threadId": sid, "includeTurns": False})
+                self.assertEqual(metadata["thread"]["name"], "Synthetic portable session")
                 self.assertEqual(Path(metadata["thread"]["cwd"]).resolve(), b.resolve())
                 resumed = client.call("thread/resume", {"threadId": sid, "cwd": str(b),
                     "approvalPolicy": "never", "sandbox": "read-only", "excludeTurns": True})

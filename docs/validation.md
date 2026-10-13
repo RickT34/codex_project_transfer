@@ -22,6 +22,9 @@ Coverage includes:
 - Preservation of historical message text while execution paths are remapped.
 - Complete-line snapshots, rejection of unsupported history modes and malformed paginated ordinals.
 - Duplicate native rollouts selected by the read-only Codex registry, including a shorter active file; inactive copies remain unchanged. Stale registry entries do not resolve genuine divergence.
+- UI names read from the newest numeric database version with session-index fallback; generated/manual title changes exported without changing session content or churning unchanged snapshots.
+- Title-only Git updates, concurrent-name convergence, and no repeated metadata-only commits after convergence.
+- Native source naming, title export/import, and destination `thread/read.name` verification across both history modes/providers; manual UI-refresh guidance remains informational.
 - Idempotent imports, fast-forward-only updates, original-file backups, duplicate-ID protection, and dry runs.
 - Preserving divergent continuations, deterministic exchange convergence, and recovery after competing Git pushes.
 - Preserving the code HEAD and staged index during transfer; rejecting unrelated remote branch contents.

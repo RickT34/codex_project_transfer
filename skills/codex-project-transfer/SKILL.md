@@ -60,6 +60,12 @@ Missing/cyclic/truncated ancestry stops export before new snapshots are written.
 
 Import validates the entire archive before writing sessions and recalculates history byte bounds after path/provider adaptation. Reconciliation prepares required ancestor projections with a short-lived native process, with hooks disabled and no model turn. Inspect `prepared_dependencies`, `verified`, and warnings. A nonzero exit can mean files were preserved but verification or an update is incomplete.
 
+## Titles and desktop visibility
+
+Export saves UI names and updates later generated or renamed titles; inspect `titles_updated`. Import/reconcile applies and verifies titles for new and unchanged chats; inspect `native.titles_restored`. `--no-reconcile` defers title restoration too. To repair a title missing from an earlier snapshot, export again on the source and import the updated archive; restarting alone cannot recover a name absent from the archive.
+
+An already-open desktop client may retain its chat-list cache after native discovery. Report `native.ui_refresh` and tell the user to refresh the list or restart the client manually if chats or titles remain absent. Never claim `native.verified` proves that the current GUI refreshed. Do not automatically quit/restart the app, control its UI, or create refresh hooks/background jobs. The refresh hint alone is informational, not an import failure.
+
 ## Destination provider
 
 New native sessions are bound to the receiving project's effective `model_provider`, resolved through Codex `config/read`. Both the header and replayed thread settings bind to the destination provider and project paths. The archive keeps its provider provenance and historical message text. Do not copy credentials or provider endpoints from the sending machine.

@@ -129,7 +129,9 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
     order = ordered(bundle)
     dependencies = {reference(rows)[0] for rows in bundle.values() if reference(rows)}
     storage_versions = set(bundle) - set(index)
-    result = {"verified": [], "warnings": [], "prepared_dependencies": [],
+    result = {"verified": [], "warnings": [], "prepared_dependencies": [], "titles_restored": [],
+              "ui_refresh": {"automatic": False,
+                             "hint": "If imported chats or titles are not visible in the open desktop app, refresh its chat list or restart it manually. Native verification does not verify the UI cache."},
               "storage_dependencies": sorted(bundle[sid][0]["payload"]["cpt_history_source"]["thread_id"] for sid in storage_versions)}
     with NativeClient(home, executable, cwd=cwd, disable_hooks=True) as client:
         if provider is None:
@@ -156,6 +158,11 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
                 result["warnings"].append(f"{sid}: recorded provider differs from {provider}; this existing native session was not adapted")
             if titles and sid in titles:
                 client.call("thread/name/set", {"threadId": sid, "name": titles[sid]})
+                named = client.call("thread/read", {"threadId": sid, "includeTurns": False})
+                if named.get("thread", {}).get("name") == titles[sid]:
+                    result["titles_restored"].append(sid)
+                else:
+                    result["warnings"].append(f"{sid}: native title restoration could not be verified")
         found = set()
         cursor = None
         cursors = set()
