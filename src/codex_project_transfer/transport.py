@@ -51,7 +51,7 @@ def exchange(root, remote=None, branch=None, *, publish=True):
     current = git(root, "symbolic-ref", "--quiet", "HEAD", check=False).stdout.decode().strip()
     if current == ref:
         raise TransferError("Refusing to publish over the checked-out code branch")
-    # Report authentication failures to the invoking agent instead of hanging.
+    # Report authentication failures to the CLI user instead of hanging.
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     store = check_store(root)
     advertised = git(root, "ls-remote", "--exit-code", remote, ref, env=env, check=False)

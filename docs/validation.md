@@ -1,14 +1,15 @@
 # Validation
 
-Environment: macOS arm64, Python 3.14.3, Codex CLI/app-server 0.155.1 and a focused native check with 0.159.0.
+Previous native validation environment: macOS arm64, Python 3.14.3, Codex CLI/app-server 0.155.1 and a focused native check with 0.159.0.
 
 ## Automated checks
 
 ```sh
-CPT_TEST_NATIVE=1 .venv/bin/python -m unittest discover -s tests -v
+python -m pip install -e ".[test]"
+python -m unittest discover -s tests -v
 ```
 
-Tests use temporary Git repositories, local bare remotes, isolated Codex homes, and synthetic chats. Real user sessions and the real skill installation directory are not modified.
+Tests use temporary Git repositories, local bare remotes, isolated Codex homes, and synthetic chats. Real user sessions and installed user commands are not modified. Set `CPT_TEST_NATIVE=1` to include the opt-in tests against an installed Codex CLI; these are skipped by default.
 
 Coverage includes:
 
@@ -31,8 +32,8 @@ Coverage includes:
 - Download without publishing local-only sessions; upload without importing into the native Codex home.
 - Manual check/save without network, imports, or native processes; initialization and status do not save or create hooks.
 - Path traversal and symlink protection, OS file locks, offline snapshot retention, and native-discovery retry state.
-- Direct `cpt import ./` and `cpt export ./` from the installed command, default-current-directory operation, paths with spaces, and preservation of unrelated commands during optional POSIX link registration.
-- Fresh skill-local venv installation without pip, complete bundled source and docs, operation after the original repository is moved, reinstalling from the installed bundle alone, idempotent reinstall, and preserving unrelated skills.
+- Source distribution and wheel builds, offline wheel installation into a fresh environment, and installed CLI/module entry points after the build checkout is removed.
+- Direct `cpt export ./` and `cpt import ./` from the installed command, default-current-directory operation, paths with spaces, import preview without writes, restored message contents, and initialization without snapshots or hooks.
 - Cross-provider import with a source provider unavailable on the receiver, destination-specific list visibility, native resume, and archive preservation for both native history modes.
 - Provider-neutral round-trip comparison, no false forks after a continued chat is re-exported, and preservation of real message-level differences.
 - Native configuration trust policy and explicit provider selection without an automatic probe.
@@ -41,7 +42,9 @@ Coverage includes:
 
 No model turn is requested by these tests. Native resume initialization and restored transcript contents do not establish that a new generated answer uses that context correctly.
 
-The skill manifest is also checked with the skill-creator validator. The plugin manifest uses the existing validated structure.
+## CLI packaging validation (2026-10-13)
+
+On Linux with Python 3.12.3, the default suite ran 70 tests: 63 passed and 7 opt-in native tests were skipped. A separate isolated uv check verified installation, reinstallation, running `cpt --version` after removing the source checkout, and uninstallation. The Windows/macOS CI matrix and native GUI behavior were not run in this check.
 
 ## Remaining validation
 
@@ -49,13 +52,12 @@ The skill manifest is also checked with the skill-creator validator. The plugin 
 - A newly generated model answer after transfer.
 - Real device-to-device transfer over SSH/HTTPS; automated Git tests use local bare remotes.
 - Windows/Linux real-device behavior and the provided GitHub Actions matrix.
-- Discovery of the installed skill in a fresh Codex UI chat.
 
 ## Manual acceptance
 
-1. Prepare a private test repository on two devices and install the skill on both.
-2. Ask the agent to initialize the project and remember an authorized remote. Setup should not save sessions or contact the remote.
-3. On A, create a disposable chat containing a unique token. Ask the agent to check and save the project sessions; verify a local snapshot is created.
-4. Ask the agent to upload and verify the dedicated remote session branch changed.
-5. Ask the agent on B to download. Verify that B did not publish its local-only sessions. Close clients before applying an update to an existing chat.
+1. Prepare a private test repository on two devices and install `cpt` on both.
+2. Run `cpt init ./ --remote origin` in each project. Setup should not save sessions or contact the remote.
+3. On A, create a disposable chat containing a unique token. Run `cpt check ./`; verify a local snapshot is created.
+4. Run `cpt upload ./` and verify the dedicated remote session branch changed.
+5. On B, run `cpt download ./`. Verify that B did not publish its local-only sessions. Close clients before applying an update to an existing chat.
 6. Resume the imported chat and ask for the token. This step makes a model request and supplies the separate GUI/model acceptance check.

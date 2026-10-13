@@ -1,110 +1,90 @@
-# Codex Project Transfer
+# Codex Project Transfer (cpt)
 
 **Switch computers. Pick up the conversation.**
 
-Git carries your code between machines. Your Codex debugging sessions and design discussions deserve to travel with it. This skill saves native project sessions locally and lets your agent upload or download them when you ask.
+`cpt` is a command-line program for exporting, importing, and transferring native Codex conversations by Git project. Run `cpt ...` manually in your terminal: export into `.codex-chats/`, copy it to another device and import, or upload and download through a Git remote.
 
-**Check, save, and transfer only when you ask.** No hooks, background polling, or automatic saving; the plugin stays idle between requests.
+Each command runs once on demand. No hooks, background polling, or automatic saving. Codex keeps its normal chat history.
 
 [中文](README.md)
 
-## When to use it
+## Install
 
-- Switch between computers: upload before leaving, download on the receiving device.
-- Return to a long-running project with its conversations and investigation history.
-- Back up sessions by project before moving to another machine.
-- Keep background overhead low without finding and copying session files yourself.
+Requires Python 3.10+ and Git. Default provider detection, native registration, and resuming chats also require a configured Codex CLI.
 
-## Workflow
+### Recommended: uv
 
-```mermaid
-flowchart LR
-    A[Device A: work with Codex] --> B[Ask the agent to check and save]
-    B --> C[Ask the agent to upload]
-    C --> D[Your chosen Git remote]
-    D --> E[Device B: ask the agent to download]
-    E --> F[Import and continue]
-```
-
-Codex keeps its normal chat history. This plugin snapshots project sessions only when you request a check, save, upload, or sync. Setup does not save sessions or start any background work. Downloads never upload local history. Uploads read remote history first to preserve other devices' records.
-
-Use your own private Git remote without deploying another server. A dedicated session branch keeps transfers separate from code commits. Divergent continuations are preserved.
-
-## First use
-
-Have Python 3.10+, Git, and Codex available. Download this project and ask your agent:
-
-> Read `skills/codex-project-transfer/SKILL.md` in this project and install the skill.
-
-Provide the full path if necessary. Installation prepares a **virtual environment inside the installed skill directory**. No global Python packages or environment activation are required. The runtime source, scripts, and supporting documents are copied into that same skill folder. The original download can be removed afterward. Open a new chat when installation finishes. Native plugin bundles can ask the agent to complete installation using the bundled instructions.
-
-## Set up your project
-
-In the Git project, say:
-
-> Use $codex-project-transfer to initialize this project and remember origin. Install no hooks; check, save, or transfer sessions only when I ask.
-
-Setup is local and does not save or transfer chats. No hook configuration or trust review is needed.
-
-**Your required actions:**
-
-1. Complete Git authentication if prompted during a transfer.
-2. Choose a repository authorized to hold full chats, including possible code and command output. A private repository is recommended.
-
-## Everyday requests
-
-| Ask your agent | Result |
-|---|---|
-| “Check and save this project's sessions.” | Create local snapshots and inspect the result, without remote access |
-| “Upload this project's sessions.” | Save local project sessions and upload |
-| “Download this project's sessions.” | Fetch and import, without uploading |
-| “Sync both directions once.” | One upload/download operation |
-| “Save locally only.” | Save without remote access |
-| “Check transfer status.” | Inspect local status without transferring |
-| “My imported chat is missing.” | Diagnose local restoration |
-
-On another device, prepare the same code repository and plugin, then ask the agent to configure the project and download sessions. Failed transfers preserve local records; ask again when ready to retry.
-
-The devices may use different model providers. Newly imported sessions use the receiving project’s provider while archived metadata and historical messages stay intact. Configure a working provider, model, and authentication on the receiving device first.
-
-Open chats cannot safely have their history replaced. The agent will tell you when clients must close and provide the necessary follow-up. Conflicting continuations are kept for you to choose between.
-
-Forked chats are saved with their required parent history, including native history version files. A new Git repository needs no preloaded ancestry: export collects it from the local Codex data directory. If a source file is genuinely missing, CPT identifies the affected chats.
-
-## Manual command-line use
-
-You can operate the tool directly without an agent. The path is the **Git project directory**, not its `.codex-chats` folder. The common commands are simply `cpt export ./` and `cpt import ./`.
-
-### 1. Install the `cpt` command
-
-On macOS / Linux, run once from the downloaded repository:
+Install uv following its [official instructions](https://docs.astral.sh/uv/getting-started/installation/). Download this project, then run these commands in the directory containing `pyproject.toml` (macOS, Linux, and Windows):
 
 ```sh
-python3 scripts/install.py --link-dir "$HOME/.local/bin"
+uv tool install .
+uv tool update-shell
+```
+
+Open a new terminal and verify:
+
+```sh
 cpt --version
+cpt --help
 ```
 
-All program files and the virtual environment stay inside the skill folder. `~/.local/bin/cpt` is only a link to its launcher. If that directory is not on PATH, enable it for the current terminal:
+uv installs `cpt` in an isolated environment; activation is unnecessary. A regular installation copies the program, so the downloaded source can be moved or removed afterward. Installation may fetch build dependencies; the program has no third-party runtime dependencies. See [uv tool installation](https://docs.astral.sh/uv/guides/tools/#installing-tools) for PATH handling.
+
+### Other installation methods
+
+If you already have pipx, run in this project's directory:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
+pipx install .
+pipx ensurepath
 ```
 
-Add the directory to your shell PATH configuration for future terminals. The installer preserves unrelated existing `cpt` commands.
+Open a new terminal to use `cpt`. Choose either uv or pipx.
 
-On Windows PowerShell:
+Alternatively, use a Python virtual environment. macOS / Linux:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/cpt --help
+```
+
+Windows PowerShell:
 
 ```powershell
-$CptInstall = (py -3 scripts/install.py | Out-String) | ConvertFrom-Json
-$env:Path = "$($CptInstall.command_directory);$env:Path"
-cpt --version
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\cpt.exe --help
 ```
 
-The Windows launcher is `bin\cpt.cmd` inside the installed skill. The PATH assignment affects only this terminal; add the returned `command_directory` to your user PATH to use it in new terminals.
+Keep the directory containing `.venv` when using this method. Use the command's absolute path for other projects, or activate the environment to run `cpt` directly.
 
-Then call `cpt` directly without activating `.venv`. Run the examples from your project directory: `./` means the current directory, or use an explicit path such as `"/path/to/project"`. Omitting the path also selects the current directory, for example `cpt import`.
+### Update and uninstall
 
-### 2. Export Codex sessions into the project
+After obtaining updated source, reinstall from this project's directory: `uv tool install --reinstall .`, `pipx install --force .`, or the virtual environment's `python -m pip install --upgrade .`.
+
+Uninstall with the matching `uv tool uninstall codex-project-transfer`, `pipx uninstall codex-project-transfer`, or the environment's `python -m pip uninstall codex-project-transfer`. Uninstalling leaves project `.codex-chats/` archives and native Codex conversations intact.
+
+## Quick start
+
+After installation, enter the **Git project whose conversations you want to transfer**:
+
+```sh
+cpt init ./
+cpt export ./
+```
+
+Copy the entire `.codex-chats/` directory to the corresponding Git project root on the receiving device, then run:
+
+```sh
+cpt import ./ --dry-run
+cpt import ./
+```
+
+
+## Usage
+
+### 1. Export Codex sessions into the project
 
 ```sh
 # Initialize this project once; no saving or uploading occurs
@@ -129,7 +109,7 @@ cpt export ./ --skip-incomplete
 
 For a first transfer to another device, place the **entire `.codex-chats/` directory** under that device's corresponding Git project root. Copy the directory or carry it in Git commits you manage yourself. Do not copy only one JSONL file: forked chats may depend on other files. If both devices already have snapshots, the upload/download workflow below preserves conflicting versions.
 
-### 3. Import project snapshots into Codex
+### 2. Import project snapshots into Codex
 
 Install the tool on the receiving device and prepare its project and Codex provider configuration:
 
@@ -159,7 +139,7 @@ cpt import ./ --provider crs
 
 Options such as `--provider` and `--home` can follow the subcommand. Use `--home` for a different Codex data directory.
 
-### 4. Transfer through a Git remote
+### 3. Transfer through a Git remote
 
 On each device, remember an existing authorized remote once:
 
@@ -182,20 +162,8 @@ cpt sync ./
 
 Transfers use the remote's dedicated `codex-sessions` branch without automatically committing project code. Every command is a single operation.
 
-### 5. Pending updates, conflicts, and errors
-
-- `pending`: the snapshots contain additional history. **Close Codex, ChatGPT desktop, and VS Code**, then run `cpt import ./ --update-existing`. Original records are backed up before appending. This option does not overwrite divergent histories.
-- `conflicts`: both histories have diverged. Preserve both and ask the agent to inspect their differences; do not splice JSONL manually.
-- Missing parent during export: verify that `--home` selects the correct Codex data directory, then recover the named history file from the original device or a backup. Use `--skip-incomplete` to export other complete chats first.
-- Missing parent during import: re-export on the source device and carry the entire `.codex-chats/` directory. Repeated imports cannot recreate missing records.
-- Files imported but registration failed: inspect the warnings, address their cause, then retry with `cpt reconcile ./`.
-
-`titles_updated` in export lists saved or updated names; `native.titles_restored` in import lists names whose restoration was verified. `--no-reconcile` skips native title restoration and verification; run `cpt reconcile ./` later to finish.
-
-Output is JSON. Inspect `skipped`, `warnings`, `pending`, `conflicts`, and `native.verified`. A nonzero exit code means failure or outstanding work; an `imported` entry alone does not prove restoration completed.
-
 ## Availability
 
 Native chat history is transferred; code, external attachments, credentials, and running processes are not. CLI restoration is verified on macOS. Desktop/VS Code GUI continuation and Windows/Linux real-device use still need validation. Ordinary ChatGPT web history is outside scope.
 
-Install separately on each device; its virtual environment is created inside the skill folder.
+Install `cpt` on each device and configure its Codex provider, model, and credentials separately.

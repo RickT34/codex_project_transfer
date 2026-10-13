@@ -82,38 +82,20 @@ The current branch, working code, and ordinary index are untouched. Authored ses
 
 No hooks or background workers are installed. `check` explicitly exports project sessions and returns local status. `export`, `upload`, and `sync` also snapshot when invoked; `status`, setup, `download`, and normal Codex activity do not. `run` imports already-saved local history and launches Codex, without an export on startup or exit.
 
-## Skill packaging and local runtime
+## CLI packaging and installation
 
-The root plugin manifest exposes the skill instructions. Installation assembles a complete directory under the selected `CODEX_HOME/skills/codex-project-transfer`:
+The `pyproject.toml` console entry point installs `cpt` through standard Python packaging. `python -m codex_project_transfer` is also available in the installed environment. The program has no third-party runtime dependencies and requires Python 3.10+.
 
-```text
-codex-project-transfer/
-├── SKILL.md
-├── agents/openai.yaml
-├── scripts/{cpt.py,runtime.py,install.py,commands.py}
-├── bin/cpt (or cpt.cmd on Windows)
-├── src/codex_project_transfer/
-├── docs/{design.md,validation.md}
-├── LICENSE
-├── .cpt-install.json
-└── .venv/
-```
+Use `uv tool install .` or `pipx install .` for an isolated, persistent command without environment activation. Normal wheel installations contain the Python package and do not depend on the original source checkout. Installation and PATH registration belong to the chosen package manager; CPT has no custom bootstrap, installer, or background service. Build dependencies may require network access at installation time.
 
-All executable code and supporting files are copied into this directory. The native shell launcher calls the skill-local venv directly; POSIX `--link-dir` optionally registers only a symlink in a user PATH directory. Windows users put the skill bin directory on PATH. No source-repository pointer is retained, and the source download can be removed after installation. The marker identifies the installation format without storing an external path. Reinstalling an owned skill is supported; unrelated skills are not overwritten. The installed installer can create another complete installation without the original repository.
-
-The runtime uses Python's standard `venv` module without pip or network downloads. A local `.pth` points exclusively to the installed skill's own `src/`, and commands run with that venv's Python in isolated mode (`-I`). Virtual environments are created per device rather than copied.
-
-The source-tree skill launcher directs the agent to install first. Its installed counterpart is the complete runtime launcher, so normal operations never reach outside the skill directory for project-transfer code. Native plugin bundles follow the same installation contract.
-
-Agent/developer entry points from the source repository:
+For development and tests, create a virtual environment, then run:
 
 ```sh
-python3 scripts/install.py --link-dir "$HOME/.local/bin"
-cpt import ./ --dry-run
-cpt export ./
+python -m pip install -e ".[test]"
+python -m unittest discover -s tests -v
 ```
 
-Development from the source repository can still use `scripts/cpt.py` and a repository-local venv. That development environment is not part of an installed skill.
+The test extra supplies the distribution build tools. Installation tests build a source distribution and wheel, install the wheel into a fresh environment without network access, remove the build checkout, and exercise the installed command. CI uses regular package installation on Linux, macOS, and Windows with Python 3.10 and 3.13.
 
 ## Sources
 
