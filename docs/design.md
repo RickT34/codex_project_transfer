@@ -17,7 +17,7 @@ The repository roots come from Git, including `git worktree list`. Project sessi
 - Equal conversation records: unchanged. Structured provider bindings in session metadata and replayed thread settings are ignored during comparison. The derived `history_base.end_byte_offset` is also ignored; parent ID and ordinal cutoff remain significant. Provider/model fields in historical turns or messages still participate in conflict detection.
 - One history is a prefix of the other: retain the longer history.
 - Divergence: retain both. The lexicographically smaller SHA256 determines the store's primary snapshot so exchanges converge; this is not a claim about which branch is semantically preferred.
-- Import never overwrites a divergent local history. A stored conflict can be imported with a deterministic new UUID using `cpt fork` and then `cpt import`.
+- Import never overwrites a divergent local history. A stored conflict can be imported with a deterministic new UUID using `cpt fork ./ SESSION_ID SHA256` and then `cpt import ./`.
 - No delete propagation. No last-write-wins replacement. Older snapshots cannot truncate newer local histories.
 
 When an adapted continuation is exported, its archive retains the provider provenance of the matching archived prefix, so changing machines does not introduce a provider-only diff or false fork.
@@ -54,6 +54,8 @@ The library import API accepts an optional `provider` chosen by the caller. The 
 
 ## Explicit Git transport
 
+Commands use `cpt COMMAND [PROJECT]`, with the current directory as the default project. `--home` and `--provider` work on either side of the subcommand. The run wrapper uses `cpt run PROJECT -- CODEX_ARGS` (put CPT options before PROJECT); conflict forks use `cpt fork [PROJECT] SESSION_ID SHA256`.
+
 The remote name and branch live in local Git config (`cpt.remote`, `cpt.branch`). `init --remote` only remembers a destination. Only an explicit `upload`, `download`, or non-local `sync` command contacts it. Setup, status, and `run` never invoke Git transport. No remote from a downloaded manifest is executed.
 
 Exchange reads only the dedicated remote branch, accepts only the declared store file shapes, merges native logs semantically, creates a tree using a temporary index, and creates a commit parented to the fetched remote head. It pushes without force. A rejected concurrent push leaves the local store intact; the next user-requested exchange fetches and reconciles again. There are no scheduled retries.
@@ -72,7 +74,8 @@ The root plugin manifest exposes the skill instructions. Installation assembles 
 codex-project-transfer/
 ├── SKILL.md
 ├── agents/openai.yaml
-├── scripts/{cpt.py,runtime.py,install.py}
+├── scripts/{cpt.py,runtime.py,install.py,commands.py}
+├── bin/cpt (or cpt.cmd on Windows)
 ├── src/codex_project_transfer/
 ├── docs/{design.md,validation.md}
 ├── LICENSE
@@ -80,7 +83,7 @@ codex-project-transfer/
 └── .venv/
 ```
 
-All executable code and supporting files are copied into this directory. No source-repository pointer is retained, and the source download can be removed after installation. The marker identifies the installation format without storing an external path. Reinstalling an owned skill is supported; unrelated skills are not overwritten. The installed installer can create another complete installation without the original repository.
+All executable code and supporting files are copied into this directory. The native shell launcher calls the skill-local venv directly; POSIX `--link-dir` optionally registers only a symlink in a user PATH directory. Windows users put the skill bin directory on PATH. No source-repository pointer is retained, and the source download can be removed after installation. The marker identifies the installation format without storing an external path. Reinstalling an owned skill is supported; unrelated skills are not overwritten. The installed installer can create another complete installation without the original repository.
 
 The runtime uses Python's standard `venv` module without pip or network downloads. A local `.pth` points exclusively to the installed skill's own `src/`, and commands run with that venv's Python in isolated mode (`-I`). Virtual environments are created per device rather than copied.
 
@@ -89,8 +92,9 @@ The source-tree skill launcher directs the agent to install first. Its installed
 Agent/developer entry points from the source repository:
 
 ```sh
-python3 scripts/install.py
-# Use scripts/cpt.py in the returned installed skill directory afterward.
+python3 scripts/install.py --link-dir "$HOME/.local/bin"
+cpt import ./ --dry-run
+cpt export ./
 ```
 
 Development from the source repository can still use `scripts/cpt.py` and a repository-local venv. That development environment is not part of an installed skill.

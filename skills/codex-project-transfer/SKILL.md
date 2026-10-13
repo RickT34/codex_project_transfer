@@ -13,20 +13,22 @@ All installed files must live inside the skill's own directory: `SKILL.md`, UI m
 
 For a source checkout or native plugin bundle, if this skill directory does not yet contain `src/codex_project_transfer`, locate the repository two directories above it and run that repository's `scripts/install.py` with an available Python 3.10+ (`python3` on macOS/Linux, `py -3` on Windows). The installer copies the complete bundle into the selected `CODEX_HOME/skills/codex-project-transfer`, creates `.venv` there, and returns the installed skill path. Use that returned directory for every subsequent command. `--skills-dir` supports an explicitly chosen destination. Existing unrelated skills are preserved.
 
+The installer also creates `bin/cpt` (POSIX) or `bin/cpt.cmd` (Windows) inside the skill, bound to its local venv. When the user wants a bare terminal command on POSIX, pass `--link-dir` with their user PATH directory (commonly `~/.local/bin`); only a symlink lives outside the skill. On Windows, add the returned `command_directory` to PATH. Inspect `command_on_path` before saying the bare command is available. Preserve unrelated existing commands.
+
 The installation is independent of the download/clone directory, which can be removed afterward. Do not copy the source `.venv`; create a fresh one on the receiving device. Tell the user to open a new chat for discovery. Installing this skill does not install a marketplace or transfer project sessions.
 
 For an installed skill, the stable entry point is its own `scripts/cpt.py`. It uses `.venv` and source within that same skill directory, without global pip installation, pipx, environment activation, or PATH changes. Its bundled `scripts/install.py` can install another complete copy if explicitly requested.
 
-In the commands below, `RUN` means the available Python plus the absolute path to this skill's `scripts/cpt.py`, passed as separate, correctly quoted arguments. Never invoke an arbitrary `cpt` from PATH. Global options precede the subcommand:
+In the commands below, `RUN` means the available Python plus the absolute path to this skill's `scripts/cpt.py`, passed as separate, correctly quoted arguments. Never invoke an arbitrary `cpt` from PATH. The optional project path follows the command and defaults to the current directory:
 
 ```text
-RUN -C PROJECT [--home CODEX_HOME] COMMAND ...
+RUN COMMAND [PROJECT] [--home CODEX_HOME] [--provider PROVIDER_ID] ...
 ```
 
 ## Set up a project
 
 1. Resolve the project with `git rev-parse --show-toplevel`; inspect local CPT settings and remotes without contacting the network. Run `RUN --version` to check the local runtime.
-2. Run `RUN -C PROJECT init` to prepare the local store without saving sessions. Add `--remote REMOTE` only when the user has selected an upload/download destination. This remembers the destination, but does not fetch or upload. If none is selected, finish local setup and ask for a destination only when a transfer is requested.
+2. Run `RUN init PROJECT` to prepare the local store without saving sessions. Add `--remote REMOTE` only when the user has selected an upload/download destination. This remembers the destination, but does not fetch or upload. If none is selected, finish local setup and ask for a destination only when a transfer is requested.
 3. Run `status` and report setup status. Do not run `sync`, `upload`, `download`, native reconciliation, or a full export merely to finish installation.
 4. No hooks or trust review are needed. Report setup completion and wait for a user-requested check, save, or transfer.
 
@@ -60,15 +62,15 @@ Import validates the entire archive before writing sessions and recalculates his
 
 New native sessions are bound to the receiving project's effective `model_provider`, resolved through Codex `config/read`. Both the header and replayed thread settings bind to the destination provider and project paths. The archive keeps its provider provenance and historical message text. Do not copy credentials or provider endpoints from the sending machine.
 
-If the user runs a profile or override that differs from the configuration visible to the tool, use the global `--provider PROVIDER_ID` before the subcommand, with the provider ID they selected. The ID is a provider configuration key, not a model name. If automatic resolution fails, report the error and obtain an explicit choice; do not silently fall back to the sender's provider. `--no-reconcile` skips discovery only; configuration resolution still occurs unless `--provider` is supplied.
+If the user runs a profile or override that differs from the configuration visible to the tool, use `--provider PROVIDER_ID` with the subcommand, with the provider ID they selected. The ID is a provider configuration key, not a model name. If automatic resolution fails, report the error and obtain an explicit choice; do not silently fall back to the sender's provider. `--no-reconcile` skips discovery only; configuration resolution still occurs unless `--provider` is supplied.
 
 Inspect `provider`, `provider_adapted`, and native `verified`/warnings in the result. Verification uses the destination-provider list and the actual thread metadata. This applies to newly imported sessions; existing native session prefixes retain their routing. Unchanged IDs are also verified; copying files or matching IDs is not enough to prove readability. Do not add database patches or migration procedures for previously registered sessions.
 
 ## Existing sessions and conflicts
 
-Imports do not overwrite already-open chats. `pending` means newer history is saved but not applied. Tell the user to close Codex/ChatGPT/VS Code first; after that, `import --update-existing` can apply the already-downloaded fast-forwards locally. An agent inside the active client cannot truthfully promise to close itself and finish the operation. If a user needs to finish outside the client, provide the exact local-venv command for `run -- resume --all`, with real paths, as the necessary handoff. This command only imports already-saved local history and launches Codex. It does not save on startup/exit or fetch/upload.
+Imports do not overwrite already-open chats. `pending` means newer history is saved but not applied. Tell the user to close Codex/ChatGPT/VS Code first; after that, `import --update-existing` can apply the already-downloaded fast-forwards locally. An agent inside the active client cannot truthfully promise to close itself and finish the operation. If a user needs to finish outside the client, provide the exact local-venv command for `run PROJECT -- resume --all`, with real paths, as the necessary handoff. This command only imports already-saved local history and launches Codex. It does not save on startup/exit or fetch/upload.
 
-For a divergent continuation, inspect `status` and preserve both histories. Use `fork SESSION_ID CONFLICT_SHA256` followed by `import` when the user wants both branches available independently. Never splice JSONL records, force-push the session branch, overwrite SQLite, or use a code reset to fix chat sync.
+For a divergent continuation, inspect `status` and preserve both histories. Use `fork PROJECT SESSION_ID CONFLICT_SHA256` followed by `import` when the user wants both branches available independently. Never splice JSONL records, force-push the session branch, overwrite SQLite, or use a code reset to fix chat sync.
 
 ## Evidence boundaries
 

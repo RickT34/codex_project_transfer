@@ -25,6 +25,7 @@ Coverage includes:
 - Download without publishing local-only sessions; upload without importing into the native Codex home.
 - Manual check/save without network, imports, or native processes; initialization and status do not save or create hooks.
 - Path traversal and symlink protection, OS file locks, offline snapshot retention, and native-discovery retry state.
+- Direct `cpt import ./` and `cpt export ./` from the installed command, default-current-directory operation, paths with spaces, and preservation of unrelated commands during optional POSIX link registration.
 - Fresh skill-local venv installation without pip, complete bundled source and docs, operation after the original repository is moved, reinstalling from the installed bundle alone, idempotent reinstall, and preserving unrelated skills.
 - Cross-provider import with a source provider unavailable on the receiver, destination-specific list visibility, native resume, and archive preservation for both native history modes.
 - Provider-neutral round-trip comparison, no false forks after a continued chat is re-exported, and preservation of real message-level differences.

@@ -9,12 +9,13 @@ import subprocess
 import sys
 
 from runtime import ROOT, ensure_runtime
+from commands import install_command
 
 NAME = "codex-project-transfer"
 INSTALL_FORMAT = "codex-project-transfer-skill/v1"
 
 
-def install(skills_dir):
+def install(skills_dir, link_dir=None):
     source = ROOT if (ROOT / "SKILL.md").is_file() else ROOT / "skills" / NAME
     target = skills_dir.expanduser().resolve() / NAME
     if target.is_symlink():
@@ -30,7 +31,7 @@ def install(skills_dir):
         "agents/openai.yaml": source / "agents/openai.yaml",
         "LICENSE": ROOT / "LICENSE",
     }
-    for name in ("cpt.py", "runtime.py", "install.py"):
+    for name in ("cpt.py", "runtime.py", "install.py", "commands.py"):
         files[f"scripts/{name}"] = ROOT / "scripts" / name
     for path in (ROOT / "src" / "codex_project_transfer").rglob("*.py"):
         if "__pycache__" not in path.parts:
@@ -51,7 +52,8 @@ def install(skills_dir):
             shutil.copyfile(path, destination)
     marker.write_text(json.dumps({"format": INSTALL_FORMAT}) + "\n", encoding="utf-8")
     python = ensure_runtime(target)
-    return {"skill": str(target), "python": str(python),
+    command = install_command(target, python, link_dir)
+    return {"skill": str(target), "python": str(python), **command,
             "next": "Open a new Codex chat to discover the skill"}
 
 
@@ -59,9 +61,11 @@ def main():
     parser = argparse.ArgumentParser(description="Install all skill files and its venv inside the skill directory")
     parser.add_argument("--skills-dir", type=Path,
                         default=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "skills")
+    parser.add_argument("--link-dir", type=Path,
+                        help="POSIX: register a cpt symlink in this PATH directory; all program files remain in the skill")
     args = parser.parse_args()
     try:
-        print(json.dumps(install(args.skills_dir), indent=2))
+        print(json.dumps(install(args.skills_dir, args.link_dir), indent=2))
         return 0
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f"CPT installation failed: {exc}", file=sys.stderr)

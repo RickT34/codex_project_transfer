@@ -32,9 +32,9 @@ class SkillInstallTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def install(self):
+    def install(self, *extra):
         return subprocess.run([sys.executable, str(self.plugin / "scripts/install.py"),
-                               "--skills-dir", str(self.skills)],
+                               "--skills-dir", str(self.skills), *extra],
                               env=self.env, text=True, capture_output=True, timeout=30)
 
     def test_clean_install_uses_local_venv_and_installed_skill_launcher(self):
@@ -51,7 +51,7 @@ class SkillInstallTests(unittest.TestCase):
         run = subprocess.run([sys.executable, str(launcher), "--version"],
                              env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout.strip(), "0.5.0")
+        self.assertEqual(run.stdout.strip(), "0.6.0")
         # Editable registration is local and the fresh venv needs no pip packages.
         probe = subprocess.check_output([str(python), "-I", "-c",
             "import importlib.util;print(importlib.util.find_spec('pip'))"], text=True)
@@ -63,15 +63,15 @@ class SkillInstallTests(unittest.TestCase):
         # Removing the source location must not break actual project operations.
         self.plugin.rename(self.base / "source no longer at original path")
         launcher = self.skills / "codex-project-transfer/scripts/cpt.py"
-        command = [sys.executable, str(launcher), "-C", str(self.repo)]
-        subprocess.run(command + ["init"], env=self.env, check=True, capture_output=True, timeout=30)
+        command = [sys.executable, str(launcher)]
+        subprocess.run(command + ["init", str(self.repo)], env=self.env, check=True, capture_output=True, timeout=30)
         self.assertFalse((self.repo / ".codex/hooks.json").exists())
         rows = fixture(self.repo)
         sid = rows[0]["payload"]["id"]
         put(Path(self.env["CODEX_HOME"]), rows)
         snapshot = self.repo / ".codex-chats/sessions" / (sid + ".jsonl")
         self.assertFalse(snapshot.exists())
-        result = subprocess.run(command + ["check"], env=self.env, text=True,
+        result = subprocess.run(command + ["check", str(self.repo)], env=self.env, text=True,
                                 capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(sid, json.loads(result.stdout)["export"]["exported"])
@@ -96,7 +96,7 @@ class SkillInstallTests(unittest.TestCase):
         run = subprocess.run([sys.executable, str(installed / "scripts/cpt.py"), "--version"],
                              env=self.env, text=True, capture_output=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout.strip(), "0.5.0")
+        self.assertEqual(run.stdout.strip(), "0.6.0")
 
     def test_reinstallation_preserves_unrelated_skill(self):
         target = self.skills / "codex-project-transfer"
@@ -112,3 +112,47 @@ class SkillInstallTests(unittest.TestCase):
         second = self.install()
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(json.loads(first.stdout), json.loads(second.stdout))
+
+    def test_cpt_command_imports_relative_project_without_activation(self):
+        installation = self.install()
+        self.assertEqual(installation.returncode, 0, installation.stderr)
+        installed = json.loads(installation.stdout)
+        env = dict(self.env, PATH=installed["command_directory"] + os.pathsep + self.env.get("PATH", ""))
+        command = shutil.which("cpt", path=env["PATH"])
+        self.assertIsNotNone(command)
+
+        def run(*args):
+            result = subprocess.run([command, *args], cwd=self.repo, env=env, text=True,
+                                    capture_output=True, timeout=30, shell=os.name == "nt")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+        run("init")  # omitted path means current working directory
+        source_home = Path(self.env["CODEX_HOME"])
+        rows = fixture(self.repo)
+        sid = rows[0]["payload"]["id"]
+        put(source_home, rows)
+        self.assertIn(sid, run("export", "./")["exported"])
+        receiving_home = self.base / "receiving home"
+        imported = run("import", "./", "--home", str(receiving_home), "--provider", "openai", "--no-reconcile")
+        self.assertIn(sid, imported["imported"])
+        self.assertTrue(list((receiving_home / "sessions").rglob("*.jsonl")))
+        self.assertIn(sid, run("status")["sessions"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX command symlink registration")
+    def test_command_link_points_inside_skill_and_preserves_unrelated_command(self):
+        directory = self.base / "user bin"
+        installed = self.install("--link-dir", str(directory))
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        link = directory / "cpt"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), self.skills / "codex-project-transfer/bin/cpt")
+        result = subprocess.run([str(link), "--version"], env=self.env, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0.6.0")
+        other = self.base / "other bin"
+        other.mkdir()
+        (other / "cpt").write_text("unrelated command")
+        refused = self.install("--link-dir", str(other))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual((other / "cpt").read_text(), "unrelated command")

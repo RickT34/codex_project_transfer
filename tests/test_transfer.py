@@ -116,7 +116,7 @@ class TransferTests(unittest.TestCase):
     def test_cli_resolves_destination_provider_before_importing(self):
         self.carry()
         with patch("codex_project_transfer.cli.effective_provider", return_value="effective-provider"):
-            result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb), "import", "--no-reconcile"]))
+            result = perform(parser().parse_args(["import", str(self.b), "--home", str(self.hb), "--no-reconcile"]))
         self.assertEqual(result["provider"], "effective-provider")
         self.assertEqual(core.read_rollout(next(core.session_files(self.hb)))[0]["payload"]["model_provider"], "effective-provider")
 
@@ -125,8 +125,8 @@ class TransferTests(unittest.TestCase):
     def test_explicit_provider_works_without_automatic_configuration_probe(self):
         self.carry()
         with patch("codex_project_transfer.cli.effective_provider", side_effect=AssertionError("automatic probe")):
-            result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb),
-                                                  "--provider", "chosen", "import", "--no-reconcile"]))
+            result = perform(parser().parse_args(["import", str(self.b), "--home", str(self.hb),
+                                                  "--provider", "chosen", "--no-reconcile"]))
         self.assertEqual(result["provider"], "chosen")
 
     def test_only_this_project(self):
@@ -159,7 +159,7 @@ class TransferTests(unittest.TestCase):
         self.carry()
         with patch("codex_project_transfer.cli.running_clients", return_value=["codex"]):
             with patch("sys.stderr", new=io.StringIO()):
-                code = main(["-C", str(self.b), "--home", str(self.hb), "import", "--update-existing"])
+                code = main(["import", str(self.b), "--home", str(self.hb), "--update-existing"])
         self.assertEqual(code, 1)
         self.assertFalse(self.hb.exists())
 
@@ -297,15 +297,15 @@ class TransferTests(unittest.TestCase):
         with patch("codex_project_transfer.cli.exchange", side_effect=AssertionError("network")), \
              patch("codex_project_transfer.cli.import_sessions", side_effect=AssertionError("import")), \
              patch("codex_project_transfer.cli.native_repair", side_effect=AssertionError("native process")):
-            result = perform(parser().parse_args(["-C", str(self.a), "--home", str(self.ha), "check"]))
+            result = perform(parser().parse_args(["check", str(self.a), "--home", str(self.ha)]))
         self.assertIn(self.sid, result["export"]["exported"])
         self.assertIn(self.sid, result["status"]["sessions"])
         self.assertTrue((self.a / core.STORE / "sessions" / (self.sid + ".jsonl")).exists())
 
     def test_init_and_status_never_save_or_create_hooks(self):
         with patch("codex_project_transfer.cli.export_sessions", side_effect=AssertionError("save")):
-            perform(parser().parse_args(["-C", str(self.a), "init"]))
-            perform(parser().parse_args(["-C", str(self.a), "status"]))
+            perform(parser().parse_args(["init", str(self.a)]))
+            perform(parser().parse_args(["status", str(self.a)]))
         self.assertFalse((self.a / ".codex/hooks.json").exists())
         self.assertEqual(list((self.a / core.STORE / "sessions").glob("*.jsonl")), [])
 
@@ -366,7 +366,7 @@ class GitTransportTests(unittest.TestCase):
         put(self.hb, local_only)
         core.export_sessions(self.b, self.hb)
         before = core.git(remote, "rev-parse", "refs/heads/codex-sessions").stdout
-        result = perform(parser().parse_args(["-C", str(self.b), "--home", str(self.hb), "--provider", "openai", "download", "--no-reconcile"]))
+        result = perform(parser().parse_args(["download", str(self.b), "--home", str(self.hb), "--provider", "openai", "--no-reconcile"]))
         self.assertFalse(result["git"]["pushed"])
         self.assertNotIn("export", result)
         self.assertIn(self.sid, result["import"]["imported"])
@@ -382,7 +382,7 @@ class GitTransportTests(unittest.TestCase):
         exchange(self.b)
         before = {str(p): p.read_bytes() for p in core.session_files(self.ha)}
         with patch("codex_project_transfer.cli.native_repair", side_effect=AssertionError("native import")):
-            result = perform(parser().parse_args(["-C", str(self.a), "--home", str(self.ha), "upload"]))
+            result = perform(parser().parse_args(["upload", str(self.a), "--home", str(self.ha)]))
         self.assertTrue(result["git"]["pushed"])
         self.assertNotIn("import", result)
         self.assertEqual({str(p): p.read_bytes() for p in core.session_files(self.ha)}, before)

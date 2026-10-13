@@ -91,34 +91,44 @@ def project_status(root):
 
 
 def parser():
-    p = argparse.ArgumentParser(description="Carry native Codex sessions with a Git project")
+    p = argparse.ArgumentParser(prog="cpt", description="Carry native Codex sessions with a Git project")
     p.add_argument("--version", action="version", version=__version__)
-    p.add_argument("-C", "--project", default=".", help="Project directory (default: current directory)")
-    p.add_argument("--home", help="Codex data directory (default: CODEX_HOME or ~/.codex)")
-    p.add_argument("--provider", help="Destination provider ID (default: Codex effective project configuration)")
+
+    def options(target, default=None):
+        target.add_argument("--home", default=default, help="Codex data directory (default: CODEX_HOME or ~/.codex)")
+        target.add_argument("--provider", default=default, help="Destination provider ID (default: Codex effective project configuration)")
+
+    options(p)
     sub = p.add_subparsers(dest="command", required=True)
-    init = sub.add_parser("init", help="Create a Git-friendly session store")
+
+    def command(name, help):
+        child = sub.add_parser(name, help=help)
+        child.add_argument("project", nargs="?", default=".", help="Git project directory (default: current directory)")
+        options(child, argparse.SUPPRESS)
+        return child
+
+    init = command("init", "Create a Git-friendly session store")
     init.add_argument("--remote", help="Remember the named remote for manually requested transfers")
     init.add_argument("--branch", default="codex-sessions", help="Dedicated remote session branch")
-    sub.add_parser("export", help="Save all local sessions belonging to this repository")
-    sub.add_parser("check", help="Manually save project sessions and report local status")
-    sub.add_parser("upload", help="Explicitly save and upload project sessions (no native import)")
-    download = sub.add_parser("download", help="Explicitly fetch and import sessions, without uploading")
+    command("export", "Save all local sessions belonging to this repository")
+    command("check", "Manually save project sessions and report local status")
+    command("upload", "Explicitly save and upload project sessions (no native import)")
+    download = command("download", "Explicitly fetch and import sessions, without uploading")
     download.add_argument("--update-existing", action="store_true")
     download.add_argument("--no-reconcile", action="store_true")
-    imp = sub.add_parser("import", help="Import repository sessions into Codex")
+    imp = command("import", "Import repository sessions into Codex")
     imp.add_argument("--dry-run", action="store_true")
     imp.add_argument("--update-existing", action="store_true", help="Fast-forward existing sessions; requires closed clients")
     imp.add_argument("--no-reconcile", action="store_true")
-    syn = sub.add_parser("sync", help="Explicit one-shot upload and download")
+    syn = command("sync", "Explicit one-shot upload and download")
     syn.add_argument("--local", action="store_true", help="Skip remote Git exchange")
     syn.add_argument("--update-existing", action="store_true")
     syn.add_argument("--no-reconcile", action="store_true")
-    run = sub.add_parser("run", help="Apply already-saved local history and start Codex; no automatic saving")
-    run.add_argument("codex_args", nargs=argparse.REMAINDER)
-    sub.add_parser("status", help="Show local settings, conflicts, and last sync result")
-    sub.add_parser("reconcile", help="Ask Codex to discover imported sessions")
-    fork = sub.add_parser("fork", help="Preserve a conflicting snapshot as a new native session")
+    run = command("run", "Apply local history and start Codex; use: cpt run ./ -- resume --all")
+    run.add_argument("codex_args", nargs=argparse.REMAINDER, help="Codex arguments after PROJECT --")
+    command("status", "Show local settings, conflicts, and last sync result")
+    command("reconcile", "Ask Codex to discover imported sessions")
+    fork = command("fork", "Preserve a conflicting snapshot as a new native session")
     fork.add_argument("session_id")
     fork.add_argument("sha256")
     return p

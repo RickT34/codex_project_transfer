@@ -36,7 +36,7 @@ Have Python 3.10+, Git, and Codex available. Download this project and ask your 
 
 > Read `skills/codex-project-transfer/SKILL.md` in this project and install the skill.
 
-Provide the full path if necessary. Installation prepares a **virtual environment inside the installed skill directory**. No global Python packages, activation, or PATH changes are required. The runtime source, scripts, and supporting documents are copied into that same skill folder. The original download can be removed afterward. Open a new chat when installation finishes. Native plugin bundles can ask the agent to complete installation using the bundled instructions.
+Provide the full path if necessary. Installation prepares a **virtual environment inside the installed skill directory**. No global Python packages or environment activation are required. The runtime source, scripts, and supporting documents are copied into that same skill folder. The original download can be removed afterward. Open a new chat when installation finishes. Native plugin bundles can ask the agent to complete installation using the bundled instructions.
 
 ## Set up your project
 
@@ -73,49 +73,48 @@ Forked chats are saved with the parent history needed to restore them. If a pare
 
 ## Manual command-line use
 
-You can operate the tool directly without an agent. In the examples, `/path/to/project` is the **Git project directory**, not its `.codex-chats` folder.
+You can operate the tool directly without an agent. The path is the **Git project directory**, not its `.codex-chats` folder. The common commands are simply `cpt export ./` and `cpt import ./`.
 
-### 1. Install and prepare the command
+### 1. Install the `cpt` command
 
-If not already installed, run this once from the downloaded source repository:
-
-```sh
-# macOS / Linux
-python3 scripts/install.py
-```
-
-On Windows PowerShell, use `py -3 scripts/install.py`. The complete tool and its virtual environment are installed inside the skill directory.
-
-Define a shortcut in your current terminal. This does not install a global command or require environment activation.
-
-macOS / Linux (bash or zsh):
+On macOS / Linux, run once from the downloaded repository:
 
 ```sh
-CPT_SCRIPT="${CODEX_HOME:-$HOME/.codex}/skills/codex-project-transfer/scripts/cpt.py"
-cpt() { python3 "$CPT_SCRIPT" "$@"; }
+python3 scripts/install.py --link-dir "$HOME/.local/bin"
+cpt --version
 ```
 
-Windows PowerShell:
+All program files and the virtual environment stay inside the skill folder. `~/.local/bin/cpt` is only a link to its launcher. If that directory is not on PATH, enable it for the current terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the directory to your shell PATH configuration for future terminals. The installer preserves unrelated existing `cpt` commands.
+
+On Windows PowerShell:
 
 ```powershell
-$CptRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }
-$CptScript = Join-Path $CptRoot "skills\codex-project-transfer\scripts\cpt.py"
-function cpt { py -3 $CptScript @args }
+$CptInstall = (py -3 scripts/install.py | Out-String) | ConvertFrom-Json
+$env:Path = "$($CptInstall.command_directory);$env:Path"
+cpt --version
 ```
 
-For a custom installation directory, point the shortcut to `scripts/cpt.py` inside the skill path returned by the installer. The shortcut lasts only for the current terminal session.
+The Windows launcher is `bin\cpt.cmd` inside the installed skill. The PATH assignment affects only this terminal; add the returned `command_directory` to your user PATH to use it in new terminals.
+
+Then call `cpt` directly without activating `.venv`. Run the examples from your project directory: `./` means the current directory, or use an explicit path such as `"/path/to/project"`. Omitting the path also selects the current directory, for example `cpt import`.
 
 ### 2. Export Codex sessions into the project
 
 ```sh
 # Initialize this project once; no saving or uploading occurs
-cpt -C "/path/to/project" init
+cpt init ./
 
 # Save project sessions and required ancestry under .codex-chats/
-cpt -C "/path/to/project" export
+cpt export ./
 
 # Inspect local status without uploading or downloading
-cpt -C "/path/to/project" status
+cpt status ./
 ```
 
 Use `check` instead of `export` to save and report local status in one operation.
@@ -128,55 +127,55 @@ Install the tool on the receiving device and prepare its project and Codex provi
 
 ```sh
 # Preview the plan without writing session records
-cpt -C "/path/to/project" import --dry-run
+cpt import ./ --dry-run
 
 # Import, register, and verify the sessions
-cpt -C "/path/to/project" import
+cpt import ./
 ```
 
 These commands read the project's existing `.codex-chats/`; they do not download from a remote. Select the imported chat in Codex, or resume an ID returned by the tool:
 
 ```sh
-codex -C "/path/to/project" resume SESSION_ID
+codex resume SESSION_ID
 ```
 
 The destination project's effective provider is used by default. To select one explicitly, such as `crs`:
 
 ```sh
-cpt -C "/path/to/project" --provider crs import
+cpt import ./ --provider crs
 ```
 
-Global options such as `-C`, `--provider`, and `--home` precede the subcommand. Use `--home` for a different Codex data directory.
+Options such as `--provider` and `--home` can follow the subcommand. Use `--home` for a different Codex data directory.
 
 ### 4. Transfer through a Git remote
 
 On each device, remember an existing authorized remote once:
 
 ```sh
-cpt -C "/path/to/project" init --remote origin
+cpt init ./ --remote origin
 ```
 
 Choose the operation you need:
 
 ```sh
 # Sending device: save local project sessions and upload
-cpt -C "/path/to/project" upload
+cpt upload ./
 
 # Receiving device: download and import without uploading local sessions
-cpt -C "/path/to/project" download
+cpt download ./
 
 # Current device: synchronize both directions once
-cpt -C "/path/to/project" sync
+cpt sync ./
 ```
 
 Transfers use the remote's dedicated `codex-sessions` branch without automatically committing project code. Every command is a single operation.
 
 ### 5. Pending updates, conflicts, and errors
 
-- `pending`: the snapshots contain additional history. **Close Codex, ChatGPT desktop, and VS Code**, then run `cpt -C "/path/to/project" import --update-existing`. Original records are backed up before appending. This option does not overwrite divergent histories.
+- `pending`: the snapshots contain additional history. **Close Codex, ChatGPT desktop, and VS Code**, then run `cpt import ./ --update-existing`. Original records are backed up before appending. This option does not overwrite divergent histories.
 - `conflicts`: both histories have diverged. Preserve both and ask the agent to inspect their differences; do not splice JSONL manually.
 - Missing parent history: re-export complete history on the source device. Repeated imports cannot recreate missing records.
-- Files imported but registration failed: inspect the warnings, address their cause, then retry with `cpt -C "/path/to/project" reconcile`.
+- Files imported but registration failed: inspect the warnings, address their cause, then retry with `cpt reconcile ./`.
 
 Output is JSON. Inspect `warnings`, `pending`, `conflicts`, and `native.verified`. A nonzero exit code means failure or outstanding work; an `imported` entry alone does not prove restoration completed.
 
