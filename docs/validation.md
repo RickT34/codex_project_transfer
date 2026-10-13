@@ -13,12 +13,15 @@ Tests use temporary Git repositories, local bare remotes, isolated Codex homes, 
 Coverage includes:
 
 - Recursive paginated ancestry export, prefix-only collection of out-of-project parents, cycle/truncation/missing-parent rejection, and offset rebasing against destination byte lengths and existing JSON formatting.
+- Physical version-suffix ancestry, distinct original/active files sharing a logical ID, stable materialized dependencies, and source-file preservation on re-import.
+- Strict aggregate incomplete-session errors before snapshot writes, and explicit partial export with skipped IDs, nonzero exit, preserved source files, and importable remaining chats.
 - A real two-level fork generated through Codex, transferred across paths/providers, then resumed with inherited messages visible.
 - Replayed thread settings and local world-state paths mapped without changing historical message text.
 
 - Project filtering, subdirectory mapping, registered worktrees, and macOS path aliases.
 - Preservation of historical message text while execution paths are remapped.
 - Complete-line snapshots, rejection of unsupported history modes and malformed paginated ordinals.
+- Duplicate native rollouts selected by the read-only Codex registry, including a shorter active file; inactive copies remain unchanged. Stale registry entries do not resolve genuine divergence.
 - Idempotent imports, fast-forward-only updates, original-file backups, duplicate-ID protection, and dry runs.
 - Preserving divergent continuations, deterministic exchange convergence, and recovery after competing Git pushes.
 - Preserving the code HEAD and staged index during transfer; rejecting unrelated remote branch contents.

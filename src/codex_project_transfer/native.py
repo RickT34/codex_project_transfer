@@ -10,7 +10,7 @@ import subprocess
 import threading
 import tempfile
 
-from .core import TransferError, validate_id, native_session_index, load_native_session
+from .core import TransferError, validate_id, native_session_index, collect_export_history
 from . import __version__
 
 
@@ -124,19 +124,13 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
         return {"verified": []}
     # Metadata/list visibility alone does not prove a fork's history is present.
     from .history import ordered, reference
-    index, _ = native_session_index(home)
-    bundle, pending = {}, list(ids)
-    while pending:
-        sid = pending.pop()
-        if sid in bundle:
-            continue
-        bundle[sid] = load_native_session(index, sid)
-        ref = reference(bundle[sid])
-        if ref:
-            pending.append(ref[0])
+    index, _, _ = native_session_index(home)
+    bundle, _ = collect_export_history(index, ids)
     order = ordered(bundle)
     dependencies = {reference(rows)[0] for rows in bundle.values() if reference(rows)}
-    result = {"verified": [], "warnings": [], "prepared_dependencies": []}
+    storage_versions = set(bundle) - set(index)
+    result = {"verified": [], "warnings": [], "prepared_dependencies": [],
+              "storage_dependencies": sorted(bundle[sid][0]["payload"]["cpt_history_source"]["thread_id"] for sid in storage_versions)}
     with NativeClient(home, executable, cwd=cwd, disable_hooks=True) as client:
         if provider is None:
             config = client.call("config/read", {"cwd": str(cwd) if cwd else None, "includeLayers": False})
@@ -147,12 +141,14 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
         # Initialize those recorders in ancestry order without starting a model
         # turn. Hooks are disabled for this short-lived indexing process.
         for sid in order:
-            if sid in dependencies:
+            if sid in dependencies and sid not in storage_versions:
                 client.call("thread/resume", {"threadId": sid, "excludeTurns": True,
                                                "modelProvider": provider,
                                                "approvalPolicy": "never", "sandbox": "read-only"})
                 result["prepared_dependencies"].append(sid)
         for sid in ids:
+            if sid in storage_versions:
+                continue  # A pinned physical version is not a standalone chat.
             thread = client.call("thread/read", {"threadId": sid, "includeTurns": False})
             if thread.get("thread", {}).get("id") != sid:
                 raise TransferError("Codex returned a different thread")
@@ -174,7 +170,10 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
                 raise TransferError("Codex returned a repeated pagination cursor")
             cursors.add(cursor)
         # Verify the actual read route as well as the provider-filtered list.
-        for sid in sorted(set(ids) & (found | dependencies)):
+        for sid in sorted(set(ids) & (found | dependencies | storage_versions)):
+            if sid in storage_versions:
+                result["verified"].append(sid)  # ancestry/prefix validation above
+                continue
             actual = client.call("thread/read", {"threadId": sid, "includeTurns": False})
             metadata = actual.get("thread", {})
             correct_cwd = cwd is None or (isinstance(metadata.get("cwd"), str)

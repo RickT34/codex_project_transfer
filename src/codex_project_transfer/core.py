@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -406,31 +407,134 @@ def metadata_titles(home):
     return result
 
 
+class NativeSessionIndex(dict):
+    """Active logical sessions and immutable, physically named history sources."""
+    def __init__(self):
+        super().__init__()
+        self.history_sources = {}
+        self.materialized_sources = set()
+
+
+def history_source_id(storage_id):
+    return str(uuid.uuid5(uuid.UUID(validate_id(storage_id)), "codex-project-transfer:history-source"))
+
+
+def history_source_owner(meta):
+    marker = meta.get("cpt_history_source")
+    if marker is None:
+        return None
+    if not isinstance(marker, dict):
+        raise TransferError("Invalid CPT history source marker")
+    owner = validate_id(marker.get("thread_id"))
+    if meta["id"] != history_source_id(owner):
+        raise TransferError("Materialized history source ID does not match its marker")
+    return owner
+
+
+def storage_file_id(path, meta):
+    match = re.search(r"-([0-9a-f-]{36})(?:_([0-9a-f-]{36}))?\.jsonl$", path.name)
+    if not path.name.startswith("rollout-") or not match or match[1] != meta["id"]:
+        return None
+    try:
+        return validate_id(match[2] or match[1])
+    except TransferError:
+        return None
+
+
+def reidentify_session(rows, sid):
+    """Change structured owner IDs in an export copy, not historical text."""
+    result = copy.deepcopy(rows)
+    original = result[0]["payload"]["id"]
+    result[0]["payload"]["id"] = sid
+    for row in result:
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            for key in ("session_id", "thread_id"):
+                if payload.get(key) == original:
+                    payload[key] = sid
+    return result
+
+
 def native_session_index(home):
-    paths = {}
+    paths = NativeSessionIndex()
     warnings = []
     for path in session_files(home):
         try:
             with path.open("rb") as stream:
                 meta = parse(stream.readline(MAX_BYTES + 1))[0]["payload"]
+            owner = history_source_owner(meta)
             paths.setdefault(meta["id"], []).append((path, meta))
+            if owner is not None:
+                paths.materialized_sources.add(meta["id"])
+            storage_id = storage_file_id(path, meta)
+            if storage_id:
+                paths.history_sources.setdefault(storage_id, []).append((path, meta))
         except (OSError, TransferError) as exc:
             warnings.append(f"{path.name}: {exc}")
-    return paths, warnings
+    selections = []
+    if any(len(entries) > 1 for entries in paths.values()):
+        registered = registered_rollouts(home)
+        for sid, entries in paths.items():
+            active = registered.get(sid)
+            if len(entries) < 2 or active is None:
+                continue
+            matched = [entry for entry in entries if entry[0].resolve() == active]
+            if len(matched) == 1:
+                paths[sid] = matched
+                selections.append({"session_id": sid, "selected": str(matched[0][0]),
+                                   "other_files": [str(path) for path, _ in entries if path != matched[0][0]]})
+    return paths, warnings, selections
+
+
+def registered_rollouts(home):
+    """Read Codex's active file registry without updating its database."""
+    databases = [p for p in home.glob("state_*.sqlite") if p.stem[6:].isdigit() and not p.is_symlink()]
+    if not databases:
+        return {}
+    database = max(databases, key=lambda p: int(p.stem[6:]))
+    try:
+        with contextlib.closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as c:
+            return {sid: Path(path).resolve() for sid, path in c.execute("SELECT id, rollout_path FROM threads")
+                    if isinstance(path, str) and Path(path).is_absolute()}
+    except sqlite3.Error:
+        # With no usable registry, the content-based check must still reject
+        # genuine divergence instead of guessing which file Codex uses.
+        return {}
 
 
 def load_native_session(index, sid):
     entries = index.get(sid, [])
     if not entries:
-        raise TransferError(f"Missing history dependency {sid}; re-export on the source device with its parent history")
+        raise TransferError(f"Missing native session {sid}")
     chosen = read_rollout(entries[0][0], partial=True)
     for path, _ in entries[1:]:
         candidate = read_rollout(path, partial=True)
         rel = relation(chosen, candidate)
         if rel == "diverged":
-            raise TransferError(f"{sid}: multiple divergent local rollouts")
+            files = ", ".join(str(path) for path, _ in entries)
+            raise TransferError(f"{sid}: multiple divergent local rollouts and no matching active Codex index entry: {files}")
         if rel == "extends":
             chosen = candidate
+    return chosen
+
+
+def load_history_source(index, storage_id):
+    entries = index.history_sources.get(storage_id, [])
+    if not entries:
+        raise TransferError(f"Missing native history source {storage_id}; restore its Codex history file before exporting or resuming")
+    chosen = None
+    for path, _ in entries:
+        rows = read_rollout(path, partial=True)
+        if storage_file_id(path, rows[0]["payload"]) != storage_id:
+            raise TransferError(f"History source changed identity: {path}")
+        if chosen is None:
+            chosen = rows
+        else:
+            rel = relation(chosen, rows)
+            if rel == "diverged":
+                raise TransferError(f"Ambiguous physical history source {storage_id}")
+            if rel == "extends":
+                chosen = rows
     return chosen
 
 
@@ -461,31 +565,82 @@ def rebase_store(store):
             atomic_write(path, data)
 
 
-def export_sessions(root, home):
-    from .history import prefix, reference, rebase
-    store = check_store(root)
-    roots = roots_for(root)
-    index, warnings = native_session_index(home)
-    selected = {sid for sid, entries in index.items()
-                if any(is_portable(portable_path(meta["cwd"], roots)) for _, meta in entries)}
-    limits = dict.fromkeys(selected)  # None means a complete project session.
-    pending = list(selected)
-    full, bundle = {}, {}
-    while pending:
-        sid = pending.pop()
-        if sid not in full:
-            full[sid] = load_native_session(index, sid)
-        rows = full[sid] if limits[sid] is None else prefix(full[sid], limits[sid])
-        bundle[sid] = rows
+def collect_export_history(index, selected, skip_incomplete=False):
+    from .history import prefix, reference
+    cache, bundle, skipped = {}, {}, []
+
+    def portable_comparison(rows):
+        root = Path(rows[0]["payload"]["cwd"]).resolve()
+        return bind_runtime_paths(map_paths(rows, lambda v: portable_path(v, [root])), lambda v: v)
+
+    def merge(target, sid, rows):
+        if sid not in target:
+            target[sid] = rows
+            return
+        rel = relation(portable_comparison(target[sid]), portable_comparison(rows))
+        if rel == "diverged":
+            raise TransferError(f"Inconsistent history source snapshots for {sid}")
+        if rel == "extends":
+            target[sid] = rows
+
+    def visit(sid, cutoff, required, visiting, storage):
+        key = (storage, sid)
+        if key in visiting:
+            raise TransferError(f"Cyclic history dependency at {sid}")
+        if len(visiting) >= 128:
+            raise TransferError("History dependency depth exceeds 128")
+        if key not in cache:
+            cache[key] = load_history_source(index, sid) if storage else load_native_session(index, sid)
+        source = cache[key]
+        rows = copy.deepcopy(source if cutoff is None else prefix(source, cutoff))
+        if storage:
+            owner = history_source_owner(rows[0]["payload"]) or sid
+            output_id = history_source_id(owner)
+            rows = reidentify_session(rows, output_id)
+            rows[0]["payload"]["cpt_history_source"] = {"thread_id": owner}
+            # These are ancestry records, not additional interactive project chats.
+            rows[0]["payload"]["source"] = "exec"
+        else:
+            output_id = sid
         ref = reference(rows)
         if ref:
-            parent, cutoff = ref
-            if parent not in limits:
-                limits[parent] = cutoff
-                pending.append(parent)
-            elif limits[parent] is not None and limits[parent] < cutoff:
-                limits[parent] = cutoff
-                pending.append(parent)
+            parent = visit(ref[0], ref[1], required, visiting | {key}, True)
+            rows[0]["payload"]["history_base"]["thread_id"] = parent
+        merge(required, output_id, rows)
+        return output_id
+
+    for sid in sorted(selected):
+        required = {}
+        try:
+            visit(sid, None, required, set(), False)
+            for dependency, rows in required.items():
+                if dependency in bundle:
+                    # Check consistency before committing this root's closure.
+                    probe = {dependency: bundle[dependency]}
+                    merge(probe, dependency, rows)
+        except (TransferError, OSError) as exc:
+            skipped.append({"session_id": sid, "reason": str(exc)})
+            continue
+        for dependency, rows in required.items():
+            merge(bundle, dependency, rows)
+    if skipped and not skip_incomplete:
+        details = "; ".join(f"{item['session_id']}: {item['reason']}" for item in skipped)
+        raise TransferError(f"Cannot export {len(skipped)} incomplete session(s): {details}. "
+                            "Use --skip-incomplete to explicitly export only complete sessions")
+    return bundle, skipped
+
+
+def export_sessions(root, home, *, skip_incomplete=False):
+    from .history import rebase
+    store = check_store(root)
+    roots = roots_for(root)
+    index, warnings, selections = native_session_index(home)
+    selected = {sid for sid, entries in index.items()
+                if sid not in index.materialized_sources
+                and any(is_portable(portable_path(meta["cwd"], roots)) for _, meta in entries)}
+    bundle, skipped = collect_export_history(index, selected, skip_incomplete)
+    if skipped:
+        warnings.append(f"Skipped {len(skipped)} incomplete session(s); see skipped for IDs and reasons")
     # Validate the entire dependency closure before writing any snapshot.
     from .history import ordered
     ordered(bundle)
@@ -497,7 +652,8 @@ def export_sessions(root, home):
     portable = rebase(portable)
     existing = {rows[0]["payload"]["id"]: rows for _, rows in store_sessions(store)}
     ordered({**existing, **portable})
-    result = {"exported": [], "dependencies": sorted(set(bundle) - selected), "conflicts": [], "warnings": warnings}
+    result = {"exported": [], "dependencies": sorted(set(bundle) - selected), "conflicts": [], "warnings": warnings,
+              "selected_rollouts": [item for item in selections if item["session_id"] in bundle], "skipped": skipped}
     for sid in ordered(portable):
         outcome = merge_snapshot(store, portable[sid])
         if outcome == "diverged":
@@ -535,17 +691,14 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
     from .history import reference, prefix, byte_offset
     store = check_store(root)
     bundle, order = validate_store_history(store)
+    source_ids = {owner: sid for sid, rows in bundle.items()
+                  if (owner := history_source_owner(rows[0]["payload"])) is not None}
     roots = roots_for(root)
-    known = {}
-    for path in session_files(home):
-        with open(path, "rb") as f:
-            try:
-                meta = parse(f.readline(MAX_BYTES + 1))[0]["payload"]
-            except TransferError:
-                continue
-        known.setdefault(meta["id"], []).append(path)
+    index, _, selections = native_session_index(home)
+    known = {sid: [path for path, _ in entries] for sid, entries in index.items()}
     result = {"imported": [], "unchanged": [], "pending": [], "conflicts": [], "warnings": [],
-              "provider": provider, "provider_adapted": []}
+              "provider": provider, "provider_adapted": [],
+              "selected_rollouts": [item for item in selections if item["session_id"] in bundle]}
     plans = []
     actual_bytes = {}
     for sid in order:
@@ -586,10 +739,13 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
             local = parse(original)
             canonical = map_paths(local, lambda v: portable_path(v, roots))
             canonical = bind_runtime_paths(canonical, lambda v: v)
+            base = canonical[0]["payload"].get("history_base")
+            if isinstance(base, dict) and base.get("thread_id") in source_ids:
+                base["thread_id"] = source_ids[base["thread_id"]]
             rel = relation(canonical, bind_runtime_paths(portable, lambda v: v))
             if rel in ("equal", "ahead"):
                 result["unchanged"].append(sid)
-                if provider is not None and runtime_bindings(local[:len(incoming)]) != runtime_bindings(incoming):
+                if sid not in index.materialized_sources and provider is not None and runtime_bindings(local[:len(incoming)]) != runtime_bindings(incoming):
                     result["warnings"].append(f"{sid}: existing native session has different provider or execution paths; not modified")
                 continue
             if rel == "diverged":
@@ -640,6 +796,8 @@ def fork_conflict(root, sid, digest):
         if row.get("type") == "session_meta":
             payload["id"] = new_id
             payload["forked_from_id"] = sid
+            if payload.pop("cpt_history_source", None) is not None:
+                payload["source"] = "cli"  # an explicitly forked snapshot is now a user chat
         for key in ("session_id", "thread_id"):
             if payload.get(key) == sid:
                 payload[key] = new_id

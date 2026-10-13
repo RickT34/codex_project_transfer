@@ -42,6 +42,40 @@ def paginated_fixture(root):
 @unittest.skipUnless(os.environ.get("CPT_TEST_NATIVE") == "1" and shutil.which("codex"),
                      "Set CPT_TEST_NATIVE=1 to test the installed Codex binary")
 class NativeTests(unittest.TestCase):
+    def test_storage_version_suffix_restores_as_a_complete_parent_on_receiver(self):
+        with tempfile.TemporaryDirectory(prefix="cpt-native-version-") as directory:
+            base = Path(directory).resolve()
+            source, destination, outside = base / "source", base / "destination", base / "other-project"
+            ha, hb = base / "home-a", base / "home-b"
+            for root in (source, destination):
+                root.mkdir(); core.git(root, "init", "-q"); core.initialize(root)
+            outside.mkdir(); hb.mkdir()
+            parent = paginated_fixture(outside)
+            path = put(ha, parent)
+            with NativeClient(ha, cwd=source) as client:
+                child = client.call("thread/fork", {"threadId": parent[0]["payload"]["id"],
+                                                     "cwd": str(source), "excludeTurns": True})["thread"]["id"]
+            version = str(uuid.uuid4())
+            path.rename(path.with_name(path.stem + "_" + version + ".jsonl"))
+            child_path = next(p for p in core.session_files(ha) if core.read_rollout(p)[0]["payload"]["id"] == child)
+            rows = core.read_rollout(child_path)
+            rows[0]["payload"]["history_base"]["thread_id"] = version
+            rows.append({"timestamp": "2026-10-13T00:00:00Z", "ordinal": rows[-1]["ordinal"] + 1,
+                         "type": "event_msg", "payload": {"type": "user_message", "message": "Continue the branch", "images": []}})
+            core.atomic_write(child_path, core.serialize(rows))
+            exported = core.export_sessions(source, ha)
+            sources = [core.read_rollout(source / core.STORE / "sessions" / (sid + ".jsonl"))[0]["payload"]["cpt_history_source"]["thread_id"]
+                       for sid in exported["dependencies"]]
+            self.assertIn(version, sources)
+            shutil.copytree(source / core.STORE, destination / core.STORE, dirs_exist_ok=True)
+            core.import_sessions(destination, hb, provider="openai")
+            self.assertIn(child, reconcile(hb, [child], cwd=destination)["verified"])
+            with NativeClient(hb, cwd=destination) as client:
+                client.call("thread/resume", {"threadId": child, "excludeTurns": True,
+                                               "approvalPolicy": "never", "sandbox": "read-only"})
+                history = client.call("thread/items/list", {"threadId": child, "limit": 100})
+                self.assertIn("blue-orchid", json.dumps(history))
+
     def test_real_nested_fork_restores_inherited_messages_and_destination_settings(self):
         with tempfile.TemporaryDirectory(prefix="cpt-native-forks-") as directory:
             base = Path(directory).resolve()
@@ -69,7 +103,9 @@ class NativeTests(unittest.TestCase):
                      "type": "event_msg", "payload": {"type": "user_message", "message": "AFTER FORK", "images": []}}
             core.atomic_write(parent_path, core.serialize(parent + [later]))
             exported = core.export_sessions(source, ha)
-            self.assertEqual(set(exported["dependencies"]), {parent[0]["payload"]["id"], branch})
+            sources = {core.read_rollout(source / core.STORE / "sessions" / (sid + ".jsonl"))[0]["payload"]["cpt_history_source"]["thread_id"]
+                       for sid in exported["dependencies"]}
+            self.assertEqual(sources, {parent[0]["payload"]["id"], branch})
             shutil.copytree(source / core.STORE, destination / core.STORE, dirs_exist_ok=True)
             (hb / "config.toml").write_text('model_provider="receiver"\n'
                 '[model_providers.receiver]\nname="Synthetic receiver"\n'

@@ -12,6 +12,12 @@ The repository roots come from Git, including `git worktree list`. Project sessi
 
 `legacy` and `paginated` are the accepted history modes. Paginated record ordinals are preserved and checked for monotonicity. Unknown modes are rejected. Complete newline-terminated records are snapshotted from live transcripts. Malformed records are reported, never silently dropped.
 
+## Selecting native files
+
+Codex may retain multiple physical rollouts with the same session ID. When duplicates exist, CPT reads the latest local `state_*.sqlite` registry in read-only mode and uses the matching `threads.rollout_path` as the authoritative active file. The path must match a scanned file with that metadata ID. File size, timestamp, and directory order do not override the registered selection. Other files remain untouched, and `selected_rollouts` reports the choice.
+
+If no usable matching registry entry exists, export/reconciliation can still select the complete member of a true prefix chain. Genuine divergence remains an error with the candidate paths. Import leaves ambiguous duplicates unchanged. This is native file selection, not a database repair or merge of different conversations.
+
 ## Conflict semantics
 
 - Equal conversation records: unchanged. Structured provider bindings in session metadata and replayed thread settings are ignored during comparison. The derived `history_base.end_byte_offset` is also ignored; parent ID and ordinal cutoff remain significant. Provider/model fields in historical turns or messages still participate in conflict detection.
@@ -27,6 +33,12 @@ Initial title labels travel separately. Subsequent local renames are not a distr
 ## Paginated history dependencies
 
 `session_meta.history_base.thread_id` identifies the actual storage dependency; `forked_from_id` is provenance and may name a different thread. Export recursively collects the required storage ancestry. Ancestors outside the selected project are included only through the maximum referenced ordinal cutoff, excluding their later unrelated turns. Cycles, missing parents, and truncated prefixes fail validation before snapshot writing.
+
+Logical sessions use the registered active rollout; physical ancestry uses the exact storage filename ID (`U` in `rollout-…-U.jsonl`, or `V` in `rollout-…-U_V.jsonl`). An active version may itself depend on the original file with the same logical ID. These must remain separate to avoid false cycles and lost prefixes.
+
+Export materializes each physical ancestor under UUIDv5(storage ID, `codex-project-transfer:history-source`), records its original storage ID in `cpt_history_source.thread_id`, and rewrites structured owner IDs and history references in the exported copy. Historical message text and native source files are untouched. Internal ancestry uses source `exec` and is excluded from automatic project-chat selection. Marker validation and stable IDs prevent repeated remapping on re-export. Existing native references are normalized only for import comparison, without rewriting native headers.
+
+By default, export reports all incomplete project roots and stops before writing. Explicit `--skip-incomplete` omits each affected root and its unneeded dependencies, returns `skipped` diagnostics and exit 2, and preserves existing snapshots. Existing invalid archive entries still fail validation.
 
 Every archive must contain its complete ancestry closure. Import validates this even for IDs that already exist locally. It processes parents before children, recalculating each byte boundary from the actual bytes that will exist on the receiver. Existing parents may have different JSON whitespace, longer histories, or platform path lengths; their required prefixes must match. Conflicting parent variants through a fork boundary are rejected instead of silently choosing a different ancestry.
 

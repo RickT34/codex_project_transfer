@@ -69,7 +69,7 @@ The devices may use different model providers. Newly imported sessions use the r
 
 Open chats cannot safely have their history replaced. The agent will tell you when clients must close and provide the necessary follow-up. Conflicting continuations are kept for you to choose between.
 
-Forked chats are saved with the parent history needed to restore them. If a parent is missing, re-export on the source device with the complete history available. Incomplete archives fail clearly instead of being reported as successful imports.
+Forked chats are saved with their required parent history, including native history version files. A new Git repository needs no preloaded ancestry: export collects it from the local Codex data directory. If a source file is genuinely missing, CPT identifies the affected chats.
 
 ## Manual command-line use
 
@@ -118,6 +118,14 @@ cpt status ./
 ```
 
 Use `check` instead of `export` to save and report local status in one operation.
+
+Export stops by default if any chat lacks required ancestry. To save the remaining complete chats explicitly:
+
+```sh
+cpt export ./ --skip-incomplete
+```
+
+`skipped` lists each omitted chat ID and reason. Skipping returns exit code `2`, meaning partial completion. This option also applies to the export step of `check`, `upload`, and `sync`. It does not delete native chats or existing archive snapshots, and cannot repair an already incomplete archive.
 
 For a first transfer to another device, place the **entire `.codex-chats/` directory** under that device's corresponding Git project root. Copy the directory or carry it in Git commits you manage yourself. Do not copy only one JSONL file: forked chats may depend on other files. If both devices already have snapshots, the upload/download workflow below preserves conflicting versions.
 
@@ -174,10 +182,11 @@ Transfers use the remote's dedicated `codex-sessions` branch without automatical
 
 - `pending`: the snapshots contain additional history. **Close Codex, ChatGPT desktop, and VS Code**, then run `cpt import ./ --update-existing`. Original records are backed up before appending. This option does not overwrite divergent histories.
 - `conflicts`: both histories have diverged. Preserve both and ask the agent to inspect their differences; do not splice JSONL manually.
-- Missing parent history: re-export complete history on the source device. Repeated imports cannot recreate missing records.
+- Missing parent during export: verify that `--home` selects the correct Codex data directory, then recover the named history file from the original device or a backup. Use `--skip-incomplete` to export other complete chats first.
+- Missing parent during import: re-export on the source device and carry the entire `.codex-chats/` directory. Repeated imports cannot recreate missing records.
 - Files imported but registration failed: inspect the warnings, address their cause, then retry with `cpt reconcile ./`.
 
-Output is JSON. Inspect `warnings`, `pending`, `conflicts`, and `native.verified`. A nonzero exit code means failure or outstanding work; an `imported` entry alone does not prove restoration completed.
+Output is JSON. Inspect `skipped`, `warnings`, `pending`, `conflicts`, and `native.verified`. A nonzero exit code means failure or outstanding work; an `imported` entry alone does not prove restoration completed.
 
 ## Availability
 

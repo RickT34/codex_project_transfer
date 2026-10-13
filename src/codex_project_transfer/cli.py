@@ -57,8 +57,8 @@ def native_repair(root, home, ids, provider=None):
         return {"verified": [], "warnings": [f"Files preserved; native discovery failed: {exc}"]}
 
 
-def sync(root, home, *, use_git=False, update_existing=False, discover=True, provider=None):
-    result = {"export": export_sessions(root, home)}
+def sync(root, home, *, use_git=False, update_existing=False, discover=True, provider=None, skip_incomplete=False):
+    result = {"export": export_sessions(root, home, skip_incomplete=skip_incomplete)}
     if use_git:
         try:
             result["git"] = exchange(root)
@@ -110,9 +110,11 @@ def parser():
     init = command("init", "Create a Git-friendly session store")
     init.add_argument("--remote", help="Remember the named remote for manually requested transfers")
     init.add_argument("--branch", default="codex-sessions", help="Dedicated remote session branch")
-    command("export", "Save all local sessions belonging to this repository")
-    command("check", "Manually save project sessions and report local status")
-    command("upload", "Explicitly save and upload project sessions (no native import)")
+    for name, description in [("export", "Save all local sessions belonging to this repository"),
+                              ("check", "Manually save project sessions and report local status"),
+                              ("upload", "Explicitly save and upload project sessions (no native import)")]:
+        saving = command(name, description)
+        saving.add_argument("--skip-incomplete", action="store_true", help="Explicitly omit sessions with unavailable or invalid ancestry; report each skipped ID")
     download = command("download", "Explicitly fetch and import sessions, without uploading")
     download.add_argument("--update-existing", action="store_true")
     download.add_argument("--no-reconcile", action="store_true")
@@ -121,6 +123,7 @@ def parser():
     imp.add_argument("--update-existing", action="store_true", help="Fast-forward existing sessions; requires closed clients")
     imp.add_argument("--no-reconcile", action="store_true")
     syn = command("sync", "Explicit one-shot upload and download")
+    syn.add_argument("--skip-incomplete", action="store_true", help="Export only complete local sessions and report skipped IDs")
     syn.add_argument("--local", action="store_true", help="Skip remote Git exchange")
     syn.add_argument("--update-existing", action="store_true")
     syn.add_argument("--no-reconcile", action="store_true")
@@ -166,7 +169,7 @@ def perform(args):
             return result
         check_store(root)
         if args.command in ("export", "check"):
-            result = export_sessions(root, home)
+            result = export_sessions(root, home, skip_incomplete=args.skip_incomplete)
             json_write(local_dir(root) / "last-save.json", {"time": time.time(), **result})
             if args.command == "check":
                 return {"export": result, "status": project_status(root)}
@@ -178,7 +181,7 @@ def perform(args):
             provider = (args.provider or effective_provider(home, root)) if args.command == "download" else None
             result = {}
             if args.command == "upload":
-                result["export"] = export_sessions(root, home)
+                result["export"] = export_sessions(root, home, skip_incomplete=args.skip_incomplete)
             try:
                 # Upload reads the remote first only to preserve other devices' records.
                 result["git"] = exchange(root, publish=args.command == "upload")
@@ -205,7 +208,7 @@ def perform(args):
             provider = args.provider or effective_provider(home, root)
             result = sync(root, home,
                           use_git=not args.local,
-                          update_existing=update, discover=not getattr(args, "no_reconcile", False), provider=provider)
+                          update_existing=update, discover=not getattr(args, "no_reconcile", False), provider=provider, skip_incomplete=args.skip_incomplete)
             return result
         if args.command == "reconcile":
             ids = [rows[0]["payload"]["id"] for _, rows in store_sessions(check_store(root))]
