@@ -42,6 +42,55 @@ def paginated_fixture(root):
 @unittest.skipUnless(os.environ.get("CPT_TEST_NATIVE") == "1" and shutil.which("codex"),
                      "Set CPT_TEST_NATIVE=1 to test the installed Codex binary")
 class NativeTests(unittest.TestCase):
+    def test_real_nested_fork_restores_inherited_messages_and_destination_settings(self):
+        with tempfile.TemporaryDirectory(prefix="cpt-native-forks-") as directory:
+            base = Path(directory).resolve()
+            source = base / "project-a"
+            destination = base / "much longer project-b 名称"
+            outside = base / "ancestor-project"
+            ha, hb = base / "home-a", base / "home-b"
+            for root in (source, destination):
+                root.mkdir(); core.git(root, "init", "-q"); core.initialize(root)
+            outside.mkdir(); hb.mkdir()
+            parent = paginated_fixture(outside)
+            parent_path = put(ha, parent)
+            with NativeClient(ha, cwd=source) as client:
+                branch = client.call("thread/fork", {"threadId": parent[0]["payload"]["id"],
+                                                      "cwd": str(outside), "excludeTurns": True})["thread"]["id"]
+                leaf = client.call("thread/fork", {"threadId": branch, "cwd": str(source),
+                                                    "excludeTurns": True})["thread"]["id"]
+            leaf_path = next(p for p in core.session_files(ha) if core.read_rollout(p)[0]["payload"]["id"] == leaf)
+            leaf_rows = core.read_rollout(leaf_path)
+            leaf_rows.append({"timestamp": "2026-10-13T00:00:00Z", "ordinal": leaf_rows[-1]["ordinal"] + 1,
+                              "type": "event_msg", "payload": {"type": "user_message", "message": "Continue the branch", "images": []}})
+            core.atomic_write(leaf_path, core.serialize(leaf_rows))
+            # A required ancestor is exported only through the referenced cutoff.
+            later = {"timestamp": "2026-10-13T00:00:00Z", "ordinal": parent[-1]["ordinal"] + 1,
+                     "type": "event_msg", "payload": {"type": "user_message", "message": "AFTER FORK", "images": []}}
+            core.atomic_write(parent_path, core.serialize(parent + [later]))
+            exported = core.export_sessions(source, ha)
+            self.assertEqual(set(exported["dependencies"]), {parent[0]["payload"]["id"], branch})
+            shutil.copytree(source / core.STORE, destination / core.STORE, dirs_exist_ok=True)
+            (hb / "config.toml").write_text('model_provider="receiver"\n'
+                '[model_providers.receiver]\nname="Synthetic receiver"\n'
+                'base_url="http://127.0.0.1:1/v1"\nwire_api="responses"\n')
+            imported = core.import_sessions(destination, hb, provider="receiver")
+            self.assertEqual(len(imported["imported"]), 3)
+            verification = reconcile(hb, [leaf], cwd=destination)
+            self.assertIn(leaf, verification["verified"], verification)
+            with NativeClient(hb, cwd=destination) as client:
+                metadata = client.call("thread/read", {"threadId": leaf})["thread"]
+                self.assertEqual(metadata["modelProvider"], "receiver")
+                self.assertEqual(Path(metadata["cwd"]).resolve(), destination)
+                resumed = client.call("thread/resume", {"threadId": leaf, "excludeTurns": True,
+                                                         "approvalPolicy": "never", "sandbox": "read-only"})
+                self.assertEqual(resumed["modelProvider"], "receiver")
+                self.assertEqual(Path(resumed["cwd"]).resolve(), destination)
+                history = client.call("thread/items/list", {"threadId": leaf, "limit": 100})
+                self.assertIn("blue-orchid", json.dumps(history))
+                self.assertNotIn("AFTER FORK", json.dumps(history))
+            self.assertEqual(core.export_sessions(destination, hb)["conflicts"], [])
+
     def transfer_and_resume(self, builder, paginated=False, cross_provider=False):
         with tempfile.TemporaryDirectory(prefix="cpt-native-test-") as directory:
             base = Path(directory)

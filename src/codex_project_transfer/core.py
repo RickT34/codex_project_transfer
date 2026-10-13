@@ -204,33 +204,114 @@ def is_portable(value):
     return isinstance(value, str) and (value == TOKEN or value.startswith(TOKEN + "/"))
 
 
+def thread_settings(row):
+    payload = row.get("payload", {})
+    if (row.get("type") == "event_msg" and isinstance(payload, dict)
+            and payload.get("type") == "thread_settings_applied"):
+        settings = payload.get("thread_settings")
+        if isinstance(settings, dict):
+            return settings
+    return None
+
+
+def runtime_paths(row, local_only=False):
+    settings = thread_settings(row)
+    if settings is not None:
+        yield settings
+    if row.get("type") != "world_state":
+        return
+    payload = row.get("payload", {})
+    state = payload.get("state", {}) if isinstance(payload, dict) else {}
+    config = state.get("environments", {}) if isinstance(state, dict) else {}
+    environments = config.get("environments", {}) if isinstance(config, dict) else {}
+    if isinstance(environments, dict):
+        values = [environments.get("local")] if local_only else environments.values()
+        for env in values:
+            if isinstance(env, dict):
+                yield env
+
+
 def map_paths(rows, mapper):
-    """Map execution metadata only. Never rewrite messages or tool output."""
+    """Map structured execution paths, never message or tool-output text."""
     rows = copy.deepcopy(rows)
     for row in rows:
-        if row.get("type") not in ("session_meta", "turn_context"):
-            continue
-        payload = row.get("payload", {})
-        if not isinstance(payload, dict):
-            continue
-        if "cwd" in payload:
-            payload["cwd"] = mapper(payload["cwd"])
-        for field in ("runtime_workspace_roots", "workspace_roots"):
-            if isinstance(payload.get(field), list):
-                payload[field] = [mapper(p) for p in payload[field]]
+        containers = list(runtime_paths(row))
+        if row.get("type") in ("session_meta", "turn_context"):
+            containers.append(row.get("payload", {}))
+        for payload in containers:
+            if not isinstance(payload, dict):
+                continue
+            if "cwd" in payload:
+                payload["cwd"] = mapper(payload["cwd"])
+            for field in ("runtime_workspace_roots", "workspace_roots"):
+                if isinstance(payload.get(field), list):
+                    payload[field] = [mapper(p) for p in payload[field]]
     return rows
+
+
+def bind_runtime_paths(rows, mapper):
+    """Bind replayed local execution settings to the imported project scope."""
+    result = copy.deepcopy(rows)
+    destination = mapper(result[0]["payload"]["cwd"])
+    for row in result:
+        for payload in runtime_paths(row, local_only=True):
+            if "cwd" in payload:
+                value = payload["cwd"]
+                payload["cwd"] = mapper(value) if is_portable(value) else destination
+            for key in ("runtime_workspace_roots", "workspace_roots"):
+                if isinstance(payload.get(key), list):
+                    payload[key] = [mapper(v) if is_portable(v) else destination for v in payload[key]]
+    return result
+
+
+def provider_fields(row):
+    if row.get("type") == "session_meta":
+        yield row["payload"], "model_provider"
+    settings = thread_settings(row)
+    if settings is not None and "model_provider_id" in settings:
+        yield settings, "model_provider_id"
+
+
+def adapt_provider(rows, provider):
+    result = copy.deepcopy(rows)
+    if provider is not None:
+        for row in result:
+            for obj, key in provider_fields(row):
+                obj[key] = provider
+    return result
+
+
+def runtime_bindings(rows):
+    """Only replayed routing fields; conversation text is not a routing signal."""
+    result = []
+    for row in rows:
+        values = []
+        for obj, key in provider_fields(row):
+            values.append((key, obj.get(key)))
+        containers = list(runtime_paths(row, local_only=True))
+        if row.get("type") == "session_meta":
+            containers.append(row["payload"])
+        for obj in containers:
+            values.append({key: obj[key] for key in ("cwd", "runtime_workspace_roots", "workspace_roots") if key in obj})
+        result.append(values)
+    return result
+
+
+def comparable(row):
+    row = copy.deepcopy(row)
+    for obj, key in provider_fields(row):
+        obj.pop(key, None)
+    if row.get("type") == "session_meta":
+        base = row["payload"].get("history_base")
+        if isinstance(base, dict):
+            base.pop("end_byte_offset", None)  # recalculated from destination bytes
+    return row
 
 
 def relation(existing, incoming):
     # Compare serialized JSON rather than Python equality (True != 1 in JSON).
-    for index, (a, b) in enumerate(zip(existing, incoming)):
-        if index == 0 and a.get("type") == b.get("type") == "session_meta":
-            # The header provider is a receiving-machine routing choice, not
-            # conversation content. Provider fields in messages/turns still count.
-            a, b = copy.deepcopy(a), copy.deepcopy(b)
-            a["payload"].pop("model_provider", None)
-            b["payload"].pop("model_provider", None)
-        if encode(a) != encode(b):
+    for a, b in zip(existing, incoming):
+        if encode(comparable(a)) != encode(comparable(b)):
             return "diverged"
     if len(existing) == len(incoming):
         return "equal"
@@ -270,14 +351,16 @@ def merge_snapshot(store, rows):
     result = "added"
     if target.exists():
         previous = read_rollout(target)
-        # Preserve the archive's original provider when exporting a locally
-        # adapted continuation. Never rewrite historical turn/model fields.
+        # Retain archived route provenance across an adapted round trip.
         rows = copy.deepcopy(rows)
-        original_provider = previous[0]["payload"].get("model_provider")
-        if original_provider is None:
-            rows[0]["payload"].pop("model_provider", None)
-        else:
-            rows[0]["payload"]["model_provider"] = original_provider
+        for old, new in zip(previous, rows):
+            if encode(comparable(old)) != encode(comparable(new)):
+                break
+            for (old_obj, old_key), (new_obj, new_key) in zip(provider_fields(old), provider_fields(new)):
+                if old_key in old_obj:
+                    new_obj[new_key] = old_obj[old_key]
+                else:
+                    new_obj.pop(new_key, None)
         result = relation(previous, rows)
         if result in ("equal", "ahead"):
             return result
@@ -323,35 +406,110 @@ def metadata_titles(home):
     return result
 
 
-def export_sessions(root, home):
-    store = check_store(root)
-    roots = roots_for(root)
-    result = {"exported": [], "conflicts": [], "warnings": []}
-    titles = metadata_titles(home)
+def native_session_index(home):
+    paths = {}
+    warnings = []
     for path in session_files(home):
         try:
-            # Most sessions belong to other repos. Avoid reading their contents.
-            with open(path, "rb") as f:
-                first = f.readline(MAX_BYTES + 1)
-            first_rows = parse(first)
-            cwd = first_rows[0]["payload"]["cwd"]
-            if not is_portable(portable_path(cwd, roots)):
-                continue
-            rows = map_paths(read_rollout(path, partial=True), lambda v: portable_path(v, roots))
-            sid = rows[0]["payload"]["id"]
-            outcome = merge_snapshot(store, rows)
-            if outcome == "diverged":
-                result["conflicts"].append(sid)
-            elif outcome in ("added", "extends"):
-                result["exported"].append(sid)
-            if sid in titles:
-                title_path = safe_child(store, f"titles/{sid}.json")
-                data = encode({"title": titles[sid]}) + b"\n"
-                # Initial labels travel; ongoing renames remain client-local.
-                if not title_path.exists():
-                    atomic_write(title_path, data)
-        except (OSError, TransferError, ValueError) as exc:
-            result["warnings"].append(f"{path.name}: {exc}")
+            with path.open("rb") as stream:
+                meta = parse(stream.readline(MAX_BYTES + 1))[0]["payload"]
+            paths.setdefault(meta["id"], []).append((path, meta))
+        except (OSError, TransferError) as exc:
+            warnings.append(f"{path.name}: {exc}")
+    return paths, warnings
+
+
+def load_native_session(index, sid):
+    entries = index.get(sid, [])
+    if not entries:
+        raise TransferError(f"Missing history dependency {sid}; re-export on the source device with its parent history")
+    chosen = read_rollout(entries[0][0], partial=True)
+    for path, _ in entries[1:]:
+        candidate = read_rollout(path, partial=True)
+        rel = relation(chosen, candidate)
+        if rel == "diverged":
+            raise TransferError(f"{sid}: multiple divergent local rollouts")
+        if rel == "extends":
+            chosen = candidate
+    return chosen
+
+
+def validate_store_history(store):
+    from .history import ordered, prefix, reference
+    # Parent variants must agree through each child's fork boundary.
+    bundle = {rows[0]["payload"]["id"]: rows for _, rows in store_sessions(store)}
+    order = ordered(bundle)
+    for rows in bundle.values():
+        ref = reference(rows)
+        if ref:
+            parent, cutoff = ref
+            for conflict in safe_child(store, f"conflicts/{parent}").glob("*.jsonl"):
+                variant = read_rollout(safe_child(store, conflict.relative_to(store).as_posix()))
+                if relation(prefix(bundle[parent], cutoff), prefix(variant, cutoff)) != "equal":
+                    raise TransferError(f"Ambiguous history dependency {parent}: conflicting parent prefixes")
+    return bundle, order
+
+
+def rebase_store(store):
+    from .history import rebase
+    bundle, _ = validate_store_history(store)
+    rebased = rebase(bundle)
+    for sid, rows in rebased.items():
+        path = safe_child(store, f"sessions/{sid}.jsonl")
+        data = serialize(rows)
+        if path.read_bytes() != data:
+            atomic_write(path, data)
+
+
+def export_sessions(root, home):
+    from .history import prefix, reference, rebase
+    store = check_store(root)
+    roots = roots_for(root)
+    index, warnings = native_session_index(home)
+    selected = {sid for sid, entries in index.items()
+                if any(is_portable(portable_path(meta["cwd"], roots)) for _, meta in entries)}
+    limits = dict.fromkeys(selected)  # None means a complete project session.
+    pending = list(selected)
+    full, bundle = {}, {}
+    while pending:
+        sid = pending.pop()
+        if sid not in full:
+            full[sid] = load_native_session(index, sid)
+        rows = full[sid] if limits[sid] is None else prefix(full[sid], limits[sid])
+        bundle[sid] = rows
+        ref = reference(rows)
+        if ref:
+            parent, cutoff = ref
+            if parent not in limits:
+                limits[parent] = cutoff
+                pending.append(parent)
+            elif limits[parent] is not None and limits[parent] < cutoff:
+                limits[parent] = cutoff
+                pending.append(parent)
+    # Validate the entire dependency closure before writing any snapshot.
+    from .history import ordered
+    ordered(bundle)
+    portable = {}
+    for sid, rows in bundle.items():
+        ancestry_roots = roots if sid in selected else [*roots, Path(rows[0]["payload"]["cwd"]).resolve()]
+        mapped = map_paths(rows, lambda v: portable_path(v, ancestry_roots))
+        portable[sid] = bind_runtime_paths(mapped, lambda v: v)
+    portable = rebase(portable)
+    existing = {rows[0]["payload"]["id"]: rows for _, rows in store_sessions(store)}
+    ordered({**existing, **portable})
+    result = {"exported": [], "dependencies": sorted(set(bundle) - selected), "conflicts": [], "warnings": warnings}
+    for sid in ordered(portable):
+        outcome = merge_snapshot(store, portable[sid])
+        if outcome == "diverged":
+            result["conflicts"].append(sid)
+        elif outcome in ("added", "extends"):
+            result["exported"].append(sid)
+    rebase_store(store)
+    titles = metadata_titles(home)
+    for sid in portable:
+        path = safe_child(store, f"titles/{sid}.json")
+        if sid in titles and not path.exists():
+            json_write(path, {"title": titles[sid]})
     return result
 
 
@@ -374,7 +532,9 @@ def import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=Fa
 
 
 def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=False, provider=None):
+    from .history import reference, prefix, byte_offset
     store = check_store(root)
+    bundle, order = validate_store_history(store)
     roots = roots_for(root)
     known = {}
     for path in session_files(home):
@@ -387,15 +547,29 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
     result = {"imported": [], "unchanged": [], "pending": [], "conflicts": [], "warnings": [],
               "provider": provider, "provider_adapted": []}
     plans = []
-    for _, portable in store_sessions(store):
-        sid = portable[0]["payload"]["id"]
+    actual_bytes = {}
+    for sid in order:
+        portable = bundle[sid]
         if sid in exclude:
+            if len(known.get(sid, [])) == 1:
+                actual_bytes[sid] = known[sid][0].read_bytes()
             continue
         if not is_portable(portable[0]["payload"]["cwd"]):
             raise TransferError("Snapshot has an unmapped project directory")
-        incoming = map_paths(portable, lambda v: native_path(v, root))
-        if provider is not None:
-            incoming[0]["payload"]["model_provider"] = provider
+        incoming = bind_runtime_paths(portable, lambda v: native_path(v, root))
+        incoming = map_paths(incoming, lambda v: native_path(v, root))
+        incoming = adapt_provider(incoming, provider)
+        ref = reference(portable)
+        if ref:
+            parent, cutoff = ref
+            if parent not in actual_bytes:
+                raise TransferError(f"{sid}: history dependency {parent} cannot be imported")
+            actual = map_paths(parse(actual_bytes[parent]), lambda v: portable_path(v, roots))
+            actual = bind_runtime_paths(actual, lambda v: v)
+            expected = bind_runtime_paths(bundle[parent], lambda v: v)
+            if relation(prefix(actual, cutoff), prefix(expected, cutoff)) != "equal":
+                raise TransferError(f"{sid}: local parent {parent} differs from the required history prefix")
+            incoming[0]["payload"]["history_base"]["end_byte_offset"] = byte_offset(actual_bytes[parent], cutoff)
         matches = known.get(sid, [])
         if len(matches) > 1:
             result["warnings"].append(f"{sid}: multiple local rollouts; not modified")
@@ -408,11 +582,15 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
         target = matches[0] if matches else safe_child(home, f"sessions/{stamp:%Y/%m/%d}/rollout-{stamp:%Y-%m-%dT%H-%M-%S}-{sid}.jsonl")
         original = target.read_bytes() if matches else None
         if original is not None:
+            actual_bytes[sid] = original
             local = parse(original)
             canonical = map_paths(local, lambda v: portable_path(v, roots))
-            rel = relation(canonical, portable)
+            canonical = bind_runtime_paths(canonical, lambda v: v)
+            rel = relation(canonical, bind_runtime_paths(portable, lambda v: v))
             if rel in ("equal", "ahead"):
                 result["unchanged"].append(sid)
+                if provider is not None and runtime_bindings(local[:len(incoming)]) != runtime_bindings(incoming):
+                    result["warnings"].append(f"{sid}: existing native session has different provider or execution paths; not modified")
                 continue
             if rel == "diverged":
                 result["conflicts"].append(sid)
@@ -423,11 +601,13 @@ def _import_sessions(root, home, *, update_existing=False, exclude=(), dry_run=F
             # Preserve the existing native session's routing and bytes. Only
             # append new conversation records; provider adaptation is for new imports.
             data = original + (b"\n" if original and not original.endswith(b"\n") else b"")
+            incoming = adapt_provider(incoming, local[0]["payload"].get("model_provider"))
             data += serialize(incoming[len(local):])
         else:
             data = serialize(incoming)
             if provider is not None and portable[0]["payload"].get("model_provider") != provider:
                 result["provider_adapted"].append(sid)
+        actual_bytes[sid] = data
         plans.append((sid, target, original, data))
         result["imported"].append(sid)
     if dry_run:

@@ -50,13 +50,19 @@ Perform remote operations only in response to the user's upload, download, or sy
 
 On failure, preserve snapshots, report the error, and stop. Do not silently start polling or schedule future retries. A successful exit code alone is not proof of complete transfer: inspect errors, warnings, pending updates, conflicts, and native verification in the JSON result.
 
+## History completeness
+
+Export includes the storage ancestors required by paginated forks, including needed prefixes from outside the project. Inspect `dependencies` in the export result. Missing/cyclic/truncated ancestry stops the operation; ask the user to re-export on the source device with the parent history available. Never remove `history_base`, fabricate missing turns, or report metadata/list visibility alone as successful restoration.
+
+Import validates the entire archive before writing sessions and recalculates history byte bounds after path/provider adaptation. Reconciliation prepares required ancestor projections with a short-lived native process, with hooks disabled and no model turn. Inspect `prepared_dependencies`, `verified`, and warnings. A nonzero exit can mean files were preserved but verification or an update is incomplete.
+
 ## Destination provider
 
-New native sessions are bound to the receiving project's effective `model_provider`, resolved through Codex `config/read`. The archive keeps its original provider and historical messages. Do not copy credentials or provider endpoints from the sending machine.
+New native sessions are bound to the receiving project's effective `model_provider`, resolved through Codex `config/read`. Both the header and replayed thread settings bind to the destination provider and project paths. The archive keeps its provider provenance and historical message text. Do not copy credentials or provider endpoints from the sending machine.
 
 If the user runs a profile or override that differs from the configuration visible to the tool, use the global `--provider PROVIDER_ID` before the subcommand, with the provider ID they selected. The ID is a provider configuration key, not a model name. If automatic resolution fails, report the error and obtain an explicit choice; do not silently fall back to the sender's provider. `--no-reconcile` skips discovery only; configuration resolution still occurs unless `--provider` is supplied.
 
-Inspect `provider`, `provider_adapted`, and native `verified`/warnings in the result. Verification uses the destination-provider list and the actual thread metadata. This applies to newly imported sessions; existing native sessions retain their routing. Do not add database patches or migration procedures for previously registered sessions.
+Inspect `provider`, `provider_adapted`, and native `verified`/warnings in the result. Verification uses the destination-provider list and the actual thread metadata. This applies to newly imported sessions; existing native session prefixes retain their routing. Unchanged IDs are also verified; copying files or matching IDs is not enough to prove readability. Do not add database patches or migration procedures for previously registered sessions.
 
 ## Existing sessions and conflicts
 

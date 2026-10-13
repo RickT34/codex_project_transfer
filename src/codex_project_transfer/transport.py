@@ -9,7 +9,8 @@ import re
 import tempfile
 
 from .core import (FORMAT, STORE, MAX_BYTES, TransferError, atomic_write, check_store,
-                   git, is_portable, map_paths, merge_snapshot, native_path, parse, safe_child, validate_id)
+                   git, is_portable, map_paths, merge_snapshot, native_path, parse, safe_child, validate_id,
+                   rebase_store, validate_store_history)
 
 
 def settings(root):
@@ -104,6 +105,8 @@ def exchange(root, remote=None, branch=None, *, publish=True):
                 title = json.loads(data)
                 if not isinstance(title.get("title"), str):
                     raise TransferError("Invalid title metadata")
+        from .history import ordered
+        ordered({rows[0]["payload"]["id"]: rows for path, rows in parsed if "/sessions/" in path})
         for path, rows in parsed:
             if "/conflicts/" in path:
                 target = safe_child(root, path)
@@ -121,8 +124,10 @@ def exchange(root, remote=None, branch=None, *, publish=True):
                 # Stable tie-breaking avoids endless title-only Git commits.
                 if not target.exists() or data < target.read_bytes():
                     atomic_write(target, data)
+        rebase_store(store)
     if not publish:
         return result
+    validate_store_history(store)
     files = []
     for path in sorted(store.rglob("*")):
         if path.is_file() or path.is_symlink():

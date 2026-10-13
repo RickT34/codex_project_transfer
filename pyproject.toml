@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-project-transfer"
-version = "0.4.0"
+version = "0.5.0"
 description = "Project-scoped, Git-friendly native Codex session transfer and lifecycle automation"
 requires-python = ">=3.10"
 license = {text = "MIT"}

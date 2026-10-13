@@ -51,7 +51,7 @@ class SkillInstallTests(unittest.TestCase):
         run = subprocess.run([sys.executable, str(launcher), "--version"],
                              env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout.strip(), "0.4.0")
+        self.assertEqual(run.stdout.strip(), "0.5.0")
         # Editable registration is local and the fresh venv needs no pip packages.
         probe = subprocess.check_output([str(python), "-I", "-c",
             "import importlib.util;print(importlib.util.find_spec('pip'))"], text=True)
@@ -96,7 +96,7 @@ class SkillInstallTests(unittest.TestCase):
         run = subprocess.run([sys.executable, str(installed / "scripts/cpt.py"), "--version"],
                              env=self.env, text=True, capture_output=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout.strip(), "0.4.0")
+        self.assertEqual(run.stdout.strip(), "0.5.0")
 
     def test_reinstallation_preserves_unrelated_skill(self):
         target = self.skills / "codex-project-transfer"

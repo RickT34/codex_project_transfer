@@ -10,24 +10,28 @@ import subprocess
 import threading
 import tempfile
 
-from .core import TransferError, validate_id
+from .core import TransferError, validate_id, native_session_index, load_native_session
 from . import __version__
 
 
 class NativeClient:
-    def __init__(self, home, executable="codex", timeout=20, cwd=None):
+    def __init__(self, home, executable="codex", timeout=20, cwd=None, disable_hooks=False):
         self.home = home
         self.executable = executable
         self.timeout = timeout
         self.messages = queue.Queue()
         self.counter = 0
         self.cwd = cwd
+        self.disable_hooks = disable_hooks
 
     def __enter__(self):
         env = dict(os.environ, CODEX_HOME=str(self.home))
         self.logs = tempfile.TemporaryFile()
         try:
-            self.process = subprocess.Popen([self.executable, "app-server", "--stdio"],
+            command = [self.executable, "app-server", "--stdio"]
+            if self.disable_hooks:
+                command += ["--disable", "hooks"]
+            self.process = subprocess.Popen(command,
                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             stderr=self.logs, env=env, cwd=self.cwd)
         except BaseException:
@@ -118,13 +122,36 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
     ids = sorted({validate_id(sid) for sid in ids})
     if not ids:
         return {"verified": []}
-    result = {"verified": [], "warnings": []}
-    with NativeClient(home, executable, cwd=cwd) as client:
+    # Metadata/list visibility alone does not prove a fork's history is present.
+    from .history import ordered, reference
+    index, _ = native_session_index(home)
+    bundle, pending = {}, list(ids)
+    while pending:
+        sid = pending.pop()
+        if sid in bundle:
+            continue
+        bundle[sid] = load_native_session(index, sid)
+        ref = reference(bundle[sid])
+        if ref:
+            pending.append(ref[0])
+    order = ordered(bundle)
+    dependencies = {reference(rows)[0] for rows in bundle.values() if reference(rows)}
+    result = {"verified": [], "warnings": [], "prepared_dependencies": []}
+    with NativeClient(home, executable, cwd=cwd, disable_hooks=True) as client:
         if provider is None:
             config = client.call("config/read", {"cwd": str(cwd) if cwd else None, "includeLayers": False})
             provider = config["config"].get("model_provider") or "openai"
         result["provider"] = provider
         result["codex_version"] = client.version
+        # A fork's inherited items live in its ancestors' native projections.
+        # Initialize those recorders in ancestry order without starting a model
+        # turn. Hooks are disabled for this short-lived indexing process.
+        for sid in order:
+            if sid in dependencies:
+                client.call("thread/resume", {"threadId": sid, "excludeTurns": True,
+                                               "modelProvider": provider,
+                                               "approvalPolicy": "never", "sandbox": "read-only"})
+                result["prepared_dependencies"].append(sid)
         for sid in ids:
             thread = client.call("thread/read", {"threadId": sid, "includeTurns": False})
             if thread.get("thread", {}).get("id") != sid:
@@ -147,9 +174,14 @@ def reconcile(home, ids, executable="codex", titles=None, *, cwd=None, provider=
                 raise TransferError("Codex returned a repeated pagination cursor")
             cursors.add(cursor)
         # Verify the actual read route as well as the provider-filtered list.
-        for sid in sorted(set(ids) & found):
+        for sid in sorted(set(ids) & (found | dependencies)):
             actual = client.call("thread/read", {"threadId": sid, "includeTurns": False})
-            if actual.get("thread", {}).get("modelProvider") == provider:
+            metadata = actual.get("thread", {})
+            correct_cwd = cwd is None or (isinstance(metadata.get("cwd"), str)
+                and Path(metadata["cwd"]).resolve().is_relative_to(Path(cwd).resolve()))
+            if not correct_cwd:
+                result["warnings"].append(f"{sid}: native working directory is outside the destination project")
+            if metadata.get("modelProvider") == provider and correct_cwd:
                 result["verified"].append(sid)
         if set(ids) - set(result["verified"]):
             result["warnings"].append("Some threads were readable but absent from the destination provider's interactive list")

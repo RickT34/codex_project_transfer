@@ -1,6 +1,6 @@
 # Validation
 
-Environment: macOS arm64, Python 3.14.3, Codex CLI/app-server 0.155.1.
+Environment: macOS arm64, Python 3.14.3, Codex CLI/app-server 0.155.1 and a focused native check with 0.159.0.
 
 ## Automated checks
 
@@ -11,6 +11,10 @@ CPT_TEST_NATIVE=1 .venv/bin/python -m unittest discover -s tests -v
 Tests use temporary Git repositories, local bare remotes, isolated Codex homes, and synthetic chats. Real user sessions and the real skill installation directory are not modified.
 
 Coverage includes:
+
+- Recursive paginated ancestry export, prefix-only collection of out-of-project parents, cycle/truncation/missing-parent rejection, and offset rebasing against destination byte lengths and existing JSON formatting.
+- A real two-level fork generated through Codex, transferred across paths/providers, then resumed with inherited messages visible.
+- Replayed thread settings and local world-state paths mapped without changing historical message text.
 
 - Project filtering, subdirectory mapping, registered worktrees, and macOS path aliases.
 - Preservation of historical message text while execution paths are remapped.
@@ -30,7 +34,7 @@ Coverage includes:
 
 No model turn is requested by these tests. Native resume initialization and restored transcript contents do not establish that a new generated answer uses that context correctly.
 
-The skill and plugin manifest are also checked with the skill-creator and plugin-creator validators.
+The skill manifest is also checked with the skill-creator validator. The plugin manifest uses the existing validated structure.
 
 ## Remaining validation
 

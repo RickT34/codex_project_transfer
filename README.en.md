@@ -69,6 +69,8 @@ The devices may use different model providers. Newly imported sessions use the r
 
 Open chats cannot safely have their history replaced. The agent will tell you when clients must close and provide the necessary follow-up. Conflicting continuations are kept for you to choose between.
 
+Forked chats are saved with the parent history needed to restore them. If a parent is missing, re-export on the source device with the complete history available. Incomplete archives fail clearly instead of being reported as successful imports.
+
 ## Availability
 
 Native chat history is transferred; code, external attachments, credentials, and running processes are not. CLI restoration is verified on macOS. Desktop/VS Code GUI continuation and Windows/Linux real-device use still need validation. Ordinary ChatGPT web history is outside scope.

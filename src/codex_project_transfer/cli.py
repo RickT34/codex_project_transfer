@@ -13,7 +13,7 @@ import time
 from . import __version__
 from .core import (STORE, TransferError, check_store, export_sessions,
                    fork_conflict, home_path, import_sessions, initialize,
-                   json_write, local_dir, locked, repository, safe_child, store_sessions)
+                   json_write, local_dir, locked, repository, safe_child, store_sessions, validate_store_history)
 from .native import reconcile, effective_provider
 from .transport import configure, exchange, settings
 
@@ -71,6 +71,7 @@ def sync(root, home, *, use_git=False, update_existing=False, discover=True, pro
         queue_path = local_dir(root) / ("pending-" + __import__("hashlib").sha256(str(home).encode()).hexdigest()[:16] + ".json")
         pending = set(json.loads(queue_path.read_text())) if queue_path.exists() else set()
         pending.update(result["import"]["imported"])
+        pending.update(result["import"]["unchanged"])
         result["native"] = native_repair(root, home, sorted(pending), provider=provider)
         pending.difference_update(result["native"].get("verified", []))
         json_write(queue_path, sorted(pending))
@@ -79,6 +80,7 @@ def sync(root, home, *, use_git=False, update_existing=False, discover=True, pro
 
 
 def project_status(root):
+    validate_store_history(check_store(root))
     state = local_dir(root) / "last-sync.json"
     saved = local_dir(root) / "last-save.json"
     return {"store": str(root / STORE), "transport": {**settings(root), "mode": "manual"},
@@ -136,7 +138,7 @@ def perform(args):
         provider = args.provider or effective_provider(home, root)
         with locked(local_dir(root) / "sync.lock"):
             restored = import_sessions(root, home, update_existing=True, provider=provider)
-            restored["native"] = native_repair(root, home, restored["imported"], provider=provider)
+            restored["native"] = native_repair(root, home, restored["imported"] + restored["unchanged"], provider=provider)
         print(json.dumps(restored, ensure_ascii=False), file=sys.stderr)
         command = args.codex_args
         if command[:1] == ["--"]:
@@ -175,7 +177,7 @@ def perform(args):
             if args.command == "download" and not result["git"].get("error"):
                 result["import"] = import_sessions(root, home, update_existing=update, provider=provider)
                 if not args.no_reconcile:
-                    result["native"] = native_repair(root, home, result["import"]["imported"], provider=provider)
+                    result["native"] = native_repair(root, home, result["import"]["imported"] + result["import"]["unchanged"], provider=provider)
             json_write(local_dir(root) / "last-sync.json", {"time": time.time(), **result})
             return result
         if args.command == "import":
@@ -184,7 +186,7 @@ def perform(args):
             provider = args.provider or effective_provider(home, root)
             result = import_sessions(root, home, update_existing=args.update_existing, dry_run=args.dry_run, provider=provider)
             if not args.dry_run and not args.no_reconcile:
-                result["native"] = native_repair(root, home, result["imported"], provider=provider)
+                result["native"] = native_repair(root, home, result["imported"] + result["unchanged"], provider=provider)
             return result
         if args.command == "sync":
             update = getattr(args, "update_existing", False)
@@ -212,6 +214,10 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False, indent=2))
         if isinstance(result, dict) and result.get("git", {}).get("error"):
             return 1
+        if isinstance(result, dict):
+            diagnostics = [result, result.get("import", {}), result.get("export", {}), result.get("native", {})]
+            if any(d.get("warnings") or d.get("pending") or d.get("conflicts") for d in diagnostics):
+                return 2  # Files may be saved, but the requested operation needs attention.
         return result.get("codex_exit_code", 0) if isinstance(result, dict) else 0
     except KeyboardInterrupt:
         return 130
